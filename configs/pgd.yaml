@@ -1,0 +1,12 @@
+attack:
+  name: "pgd"
+  epsilon: 32.0
+  alpha: 2.0
+  steps: 150
+
+detector:
+  name: "dsfd"
+
+target:
+  name: "deeprivacy2"
+  models_dir: "/kaggle/input/datasets/domenicovicenti/deep-privacy2-models"

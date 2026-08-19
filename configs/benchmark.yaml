@@ -1,0 +1,5 @@
+benchmark:
+  num_samples: 100
+  epsilons: [2.0, 4.0, 8.0, 16.0, 24.0, 32.0]
+  seed: 42
+  output_dir: "./results"
