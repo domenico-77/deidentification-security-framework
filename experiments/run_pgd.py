@@ -1,3 +1,14 @@
+import sys
+from pathlib import Path
+
+# Aggiunge la radice del framework al sys.path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+import argparse
+import yaml
+import torch
+from datasets.lfw import LFWDataset
+
 import argparse
 import yaml
 import torch
