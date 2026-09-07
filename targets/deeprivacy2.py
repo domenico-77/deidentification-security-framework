@@ -1,7 +1,14 @@
+"""
+Rappresenta il target da sottoporre al test di sicurezza
+"""
+
+
+
 import torch
 import numpy as np
 from targets.base_target import BaseDeidentificationTarget
 
+# Adapter di DP2 nel framework
 class DeepPrivacy2Target(BaseDeidentificationTarget):
     def __init__(self, config_path: str = None, models_dir: str = None):
         # Inizializzazione e caricamento offline dei modelli DSFD e StyleGAN2

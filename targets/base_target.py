@@ -1,3 +1,7 @@
+"""
+Interfaccia per il testing dei de-identificatori, è una specifica che tutti gli anonimizzatori devono rispettare
+"""
+
 from abc import ABC, abstractmethod
 import numpy as np
 import torch
