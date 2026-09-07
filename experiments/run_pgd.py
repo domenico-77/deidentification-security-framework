@@ -1,18 +1,14 @@
 import sys
 from pathlib import Path
 
-# Aggiunge la radice del framework al sys.path
+# Aggiunge la directory padre di 'experiments' (la root del progetto) a sys.path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import argparse
 import yaml
 import torch
-from data_loaders.lfw import LFWDataset
 
-import argparse
-import yaml
-import torch
-#from datasets.lfw import LFWDataset
+from data_loaders.lfw import LFWDataset
 from targets.deeprivacy2 import DeepPrivacy2Target
 from detectors.dsfd import DSFDDetector
 from attacks.pgd import PGDAttack
