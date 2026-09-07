@@ -9,7 +9,7 @@ class PGDAttack(BaseAttack):
 
     def attack(self, image_tensor: torch.Tensor, epsilon: float = 32.0, alpha: float = 2.0,
                steps: int = 150) -> torch.Tensor:
-        """
+        r"""
         Attacco PGD $L_\infty$ mirato a sopprimere le detection facciali.
         """
         self.detector.model.eval()
