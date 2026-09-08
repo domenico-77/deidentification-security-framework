@@ -21,16 +21,12 @@ class DeepPrivacy2Target(BaseDeidentificationTarget):
         if repo_root.exists() and str(repo_root) not in sys.path:
             sys.path.insert(0, str(repo_root))
     
-        # Importa direttamente le funzioni di caricamento dal modulo di inferenza
-        from deep_privacy2.config import load_config
+        # Importa le funzioni di inferenza e configurazione da dp2
         from deep_privacy2.dp2.infer import build_trained_generator
+        from deep_privacy2.dp2.config import load_config
     
-        # Carica la configurazione del modello (es. fdf128)
         cfg = load_config("fdf128", models_dir=models_dir)
-        
-        # Inizializza il generatore addestrato
-        generator = build_trained_generator(cfg)
-        return generator
+        return build_trained_generator(cfg)
 
     def process_image(self, image_tensor: torch.Tensor) -> np.ndarray:
         """
