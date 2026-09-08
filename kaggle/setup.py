@@ -16,4 +16,4 @@ def setup_kaggle_environment():
     print("Ambiente Kaggle configurato con successo.")
 
 if __name__ == "__main__":
-    setup_environment()
+    setup_kaggle_environment()
