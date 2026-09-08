@@ -3,7 +3,8 @@ Rappresenta il target da sottoporre al test di sicurezza
 """
 
 
-
+import sys
+from pathlib import Path  # <-- Mancava questo import
 import torch
 import numpy as np
 from targets.base_target import BaseDeidentificationTarget
