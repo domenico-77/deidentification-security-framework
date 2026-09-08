@@ -16,13 +16,21 @@ class DeepPrivacy2Target(BaseDeidentificationTarget):
         self.pipeline = self._load_pipeline(config_path, models_dir)
 
     def _load_pipeline(self, config_path, models_dir):
-        # La cartella MADRE che contiene il package 'deep_privacy2'
         repo_root = Path("/kaggle/input/datasets/domenicovicenti/deep-privacy2-repository")
+        
         if repo_root.exists() and str(repo_root) not in sys.path:
             sys.path.insert(0, str(repo_root))
-        # Ora Python troverà la cartella 'deep_privacy2' dentro 'repo_root'
-        from deep_privacy2 import build_deidentifier
-        return build_deidentifier("fdf128", models_dir=models_dir)
+    
+        # Importa direttamente le funzioni di caricamento dal modulo di inferenza
+        from deep_privacy2.config import load_config
+        from deep_privacy2.dp2.infer import build_trained_generator
+    
+        # Carica la configurazione del modello (es. fdf128)
+        cfg = load_config("fdf128", models_dir=models_dir)
+        
+        # Inizializza il generatore addestrato
+        generator = build_trained_generator(cfg)
+        return generator
 
     def process_image(self, image_tensor: torch.Tensor) -> np.ndarray:
         """
