@@ -15,6 +15,10 @@ class DeepPrivacy2Target(BaseDeidentificationTarget):
         self.pipeline = self._load_pipeline(config_path, models_dir)
 
     def _load_pipeline(self, config_path, models_dir):
+        # Aggiunge il percorso del repository di DeepPrivacy2 al sys.path
+        dp2_repo_path = Path("/kaggle/input/datasets/domenicovicenti/deep-privacy2-repository")
+        if dp2_repo_path.exists() and str(dp2_repo_path) not in sys.path:
+            sys.path.insert(0, str(dp2_repo_path))
         # Patch runtime e caricamento locale DeepPrivacy2
         from deeprivacy2 import build_deidentifier
         return build_deidentifier("fdf128", models_dir=models_dir)
