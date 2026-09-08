@@ -1,4 +1,5 @@
 import os
+import subprocess
 
 def setup_kaggle_environment():
     print("Installazione del pacchetto 'tops' da GitHub...")
