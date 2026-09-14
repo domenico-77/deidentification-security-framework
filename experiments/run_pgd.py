@@ -4,6 +4,7 @@ from pathlib import Path
 # Aggiunge la directory padre di 'experiments' (la root del progetto) a sys.path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import os
 import argparse
 import yaml
 import torch
@@ -31,7 +32,6 @@ def main():
     detector = DSFDDetector(target.pipeline)
 
     # Estrazione corretta dei componenti dal target/pipeline di DeepPrivacy2
-    # (Adattato alla struttura della classe DeepPrivacy2Target)
     anonymizer = target.pipeline  # oppure target.anonymizer a seconda di come è strutturato il target
     if hasattr(target, "anonymizer"):
         anonymizer = target.anonymizer
@@ -52,9 +52,20 @@ def main():
     runner = BenchmarkRunner(target, attack, dataset)
 
     print("Avvio del Benchmark PGD...")
-    runner.run_benchmark(epsilons=[2.0, 4.0, 8.0, 16.0, 24.0, 32.0], num_samples=100)
-    #runner.run_benchmark(epsilons=[8.0], num_samples=5)
-    print("Benchmark completato con successo. Risultati salvati in ./results")
+    output_dir = "./results"
+    
+    # 1. Esecuzione del benchmark (con log in tempo reale grazie al nuovo logger)
+    runner.run_benchmark(epsilons=[2.0, 4.0, 8.0, 16.0, 24.0, 32.0], num_samples=100, output_dir=output_dir)
+    #runner.run_benchmark(epsilons=[8.0], num_samples=5, output_dir=output_dir)
+
+    # 2. Generazione automatica del grafico di confronto (Post-analisi)
+    csv_path = os.path.join(output_dir, "benchmark_results.csv")
+    plot_path = os.path.join(output_dir, "comparison_plot.png")
+    
+    print("\nGenerazione del grafico di confronto per il miglior attacco...")
+    runner.visualize_best_attack(csv_path=csv_path, save_path=plot_path)
+
+    print(f"Benchmark completato con successo. Risultati e grafici salvati in {output_dir}")
 
 
 if __name__ == "__main__":
