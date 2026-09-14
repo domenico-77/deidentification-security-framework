@@ -52,8 +52,8 @@ def main():
     runner = BenchmarkRunner(target, attack, dataset)
 
     print("Avvio del Benchmark PGD...")
-    #runner.run_benchmark(epsilons=[2.0, 4.0, 8.0, 16.0, 24.0, 32.0], num_samples=100)
-    runner.run_benchmark(epsilons=[8.0], num_samples=5)
+    runner.run_benchmark(epsilons=[2.0, 4.0, 8.0, 16.0, 24.0, 32.0], num_samples=100)
+    #runner.run_benchmark(epsilons=[8.0], num_samples=5)
     print("Benchmark completato con successo. Risultati salvati in ./results")
 
 
