@@ -19,14 +19,35 @@ except ModuleNotFoundError:
     motpy.MultiObjectTracker = object
     sys.modules["motpy"] = motpy
 
-# 2. Mock dei moduli CSE interni di DeepPrivacy2 per evitare la dipendenza da densepose
+# 2. Mock dei componenti CSE/Person di DeepPrivacy2 che dipendono da DensePose
 fake_cse_detector = types.ModuleType("dp2.detection.cse_mask_face_detector")
 fake_cse_detector.CSeMaskFaceDetector = None
 sys.modules["dp2.detection.cse_mask_face_detector"] = fake_cse_detector
 
+fake_person_detector = types.ModuleType("dp2.detection.person_detector")
+fake_person_detector.CSEPersonDetector = None
+sys.modules["dp2.detection.person_detector"] = fake_person_detector
+
 fake_dp2_utils_cse = types.ModuleType("dp2.utils.cse")
 fake_dp2_utils_cse.from_E_to_vertex = lambda *args, **kwargs: None
 sys.modules["dp2.utils.cse"] = fake_dp2_utils_cse
+
+# 3. Dummy fall-back universale per densepose se richiamato da file secondari
+try:
+    import densepose
+except ModuleNotFoundError:
+    class DummyDensePose:
+        def __getattr__(self, item):
+            return lambda *args, **kwargs: None
+
+    densepose = types.ModuleType("densepose")
+    sys.modules["densepose"] = densepose
+    sys.modules["densepose.data"] = densepose
+    sys.modules["densepose.data.utils"] = densepose
+    sys.modules["densepose.modeling"] = densepose
+    sys.modules["densepose.modeling.cse"] = densepose
+    sys.modules["densepose.modeling.cse.utils"] = densepose
+    sys.modules["densepose.structures"] = densepose
 
 
 class DeepPrivacy2Target(BaseDeidentificationTarget):
