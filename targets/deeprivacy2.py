@@ -35,11 +35,15 @@ def _load_pipeline(self, config_path, models_dir):
 
     return build_trained_generator(cfg)
 
-    def process_image(self, image_tensor: torch.Tensor) -> np.ndarray:
+def process_image(self, image_tensor, *args, **kwargs) -> np.ndarray:
         """
         Riceve tensore PyTorch e applica DeepPrivacy2.
         Se il detector è ingannato, restituisce l'immagine originale inalterata.
         """
-        img_np = image_tensor.squeeze(0).cpu().numpy().transpose(1, 2, 0).astype(np.uint8)
+        if isinstance(image_tensor, torch.Tensor):
+            img_np = image_tensor.squeeze(0).cpu().numpy().transpose(1, 2, 0).astype(np.uint8)
+        else:
+            img_np = image_tensor
+
         anonymized_img = self.pipeline.anonymize_image(img_np)
         return anonymized_img
