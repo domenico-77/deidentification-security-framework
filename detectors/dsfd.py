@@ -8,11 +8,8 @@ class DSFDDetector(BaseDetector):
     def __init__(self, deeprivacy_wrapper, device=None):
         self.wrapper = deeprivacy_wrapper
         self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        
-        # Estrae la rete interna (es. .net) se esiste, altrimenti usa il detector object
         self.model = self._extract_pure_nn_module(self.wrapper)
         
-        # Assicura che self.model abbia sempre un metodo .eval() sicuro
         if not hasattr(self.model, "eval"):
             setattr(self.model, "eval", lambda: None)
         
@@ -23,7 +20,7 @@ class DSFDDetector(BaseDetector):
         self.mean = torch.tensor([104.0, 117.0, 123.0], device=self.device).view(1, 3, 1, 1)
 
     def _extract_pure_nn_module(self, wrapper):
-        """Estrae la vera rete PyTorch interna (nn.Module) navigando gli attributi tipici di DSFD."""
+        """Esplora in profondità la struttura di DeepPrivacy2 per estrarre la vera nn.Module di DSFD."""
         detector_obj = None
         if hasattr(wrapper, "detectors") and FaceDetection in wrapper.detectors:
             detector_obj = wrapper.detectors[FaceDetection]
@@ -34,14 +31,37 @@ class DSFDDetector(BaseDetector):
         else:
             detector_obj = wrapper
 
-        # Cerca esplicitamente l'attributo .net che contiene il modello PyTorch di DSFD
-        if hasattr(detector_obj, "net") and isinstance(detector_obj.net, nn.Module):
-            return detector_obj.net
-        if hasattr(detector_obj, "model") and isinstance(detector_obj.model, nn.Module):
-            return detector_obj.model
+        # 1. Cerca attributi noti che contengono la rete
+        for attr in ["net", "model", "detector", "backbone", "body"]:
+            if hasattr(detector_obj, attr):
+                val = getattr(detector_obj, attr)
+                if isinstance(val, nn.Module) and type(val).__name__ != 'FaceDetector':
+                    return val
 
-        if isinstance(detector_obj, nn.Module):
-            return detector_obj
+        # 2. Esplorazione ricorsiva tra gli attributi dell'oggetto detector
+        queue = [detector_obj]
+        visited = set()
+        
+        while queue:
+            current = queue.pop(0)
+            if id(current) in visited:
+                continue
+            visited.add(id(current))
+            
+            if isinstance(current, nn.Module) and type(current).__name__ != 'FaceDetector':
+                return current
+                
+            for attr_name in dir(current):
+                if attr_name.startswith('_'):
+                    continue
+                try:
+                    val = getattr(current, attr_name)
+                    if isinstance(val, nn.Module) and type(val).__name__ != 'FaceDetector':
+                        return val
+                    if hasattr(val, '__dict__') and id(val) not in visited:
+                        queue.append(val)
+                except Exception:
+                    continue
 
         return detector_obj
 
@@ -72,11 +92,9 @@ class DSFDDetector(BaseDetector):
             
         img_norm = img_bgr - self.mean.to(self.device)
 
-        try:
-            outputs = self.model(img_norm)
-        except Exception:
-            outputs = self.model(img)
+        outputs = self.model(img_norm)
 
+        # Loss: Soppressione delle logit di confidenza delle bounding box
         loss = 0.0
         if isinstance(outputs, (list, tuple)):
             for out in outputs:
