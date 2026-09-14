@@ -126,7 +126,36 @@ except ModuleNotFoundError:
     sys.modules["densepose.modeling.cse.utils"] = densepose
     sys.modules["densepose.structures"] = densepose
 
+def _patched_load_generator_state(ckpt, generator, ckpt_mapper=None):
+    if isinstance(ckpt, (str, Path)):
+        ckpt = torch.load(ckpt, map_location="cpu")
+    
+    # Gestione flessibile delle varie chiavi usate nei checkpoint di DeepPrivacy2
+    if "generator" in ckpt:
+        state = ckpt["generator"]
+    elif "EMA_generator" in ckpt:
+        state = ckpt["EMA_generator"]
+    elif "running_average_generator" in ckpt:
+        state = ckpt["running_average_generator"]
+    elif "generator_state" in ckpt:
+        state = ckpt["generator_state"]
+    elif "state_dict" in ckpt:
+        state = ckpt["state_dict"]
+    else:
+        state = ckpt  # Fallback se il file contiene direttamente lo state_dict
 
+    if ckpt_mapper is not None:
+        state = ckpt_mapper(state)
+        
+    generator.load_state_dict(state, strict=False)
+
+
+# Applicazione della patch al modulo infer di DP2
+try:
+    import dp2.infer
+    dp2.infer.load_generator_state = _patched_load_generator_state
+except ImportError:
+    pass
 # 5. Classe Target per la De-identificazione
 class DeepPrivacy2Target(BaseDeidentificationTarget):
     def __init__(self, config_path: str = "face_fdf128", models_dir: str = None):
