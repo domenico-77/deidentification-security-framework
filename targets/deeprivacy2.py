@@ -2,7 +2,7 @@
 Rappresenta il target da sottoporre al test di sicurezza
 """
 
-import os
+
 import sys
 import types
 import shutil
@@ -87,7 +87,7 @@ class DeepPrivacy2Target(BaseDeidentificationTarget):
 
     def _load_pipeline(self, config_path, models_dir):
         import os
-        repo_root = Path("/kaggle/input/datasets/domenicovicenti/deep-privacy2-repository")
+        repo_root = Path("/kaggle/input/datasets/domenicovicenti/deep-privacy2-repository").resolve()
         dp2_inner = repo_root / "deep_privacy2"
         
         for path in [repo_root, dp2_inner]:
@@ -115,19 +115,21 @@ class DeepPrivacy2Target(BaseDeidentificationTarget):
         cfg = LazyConfig.load(str(cfg_path))
 
         if models_dir:
-            cfg.models_dir = models_dir
+            cfg.models_dir = str(Path(models_dir).resolve())
 
         if hasattr(cfg, "detector") and hasattr(cfg.detector, "name"):
             del cfg.detector.name
 
-        # Reindirizzamento dell'output directory e della cache del detector su /tmp/outputs
-        writable_output_dir = Path("/tmp/outputs")
+        # Configurazione percorsi scrivibili assoluti su /tmp
+        writable_output_dir = Path("/tmp/outputs").resolve()
         writable_output_dir.mkdir(parents=True, exist_ok=True)
+        
         cfg.output_dir = str(writable_output_dir)
 
-        if hasattr(cfg, "detector") and hasattr(cfg.detector, "cache_directory"):
+        if hasattr(cfg, "detector"):
             cfg.detector.cache_directory = str(writable_output_dir / "face_detection_cache")
 
+        # Mantieni l'esecuzione dentro repo_root per permettere a load_config() di trovare i percorsi relativi
         orig_cwd = os.getcwd()
         try:
             os.chdir(str(repo_root))
