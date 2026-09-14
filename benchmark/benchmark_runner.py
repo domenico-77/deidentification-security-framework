@@ -1,56 +1,66 @@
 import os
-import time
-import pandas as pd
 import torch
-from metrics.perturbation import calculate_perturbation_metrics
-from metrics.image_metrics import compute_pipeline_mse
-
+import numpy as np
+import pandas as pd
+from tqdm import tqdm
 
 class BenchmarkRunner:
-    def __init__(self, target, attack, dataset, output_dir="./results"):
-        self.target = target
-        self.attack = attack
-        self.dataset = dataset
-        self.output_dir = output_dir
-        os.makedirs(output_dir, exist_ok=True)
+    def __init__(self, anonymizer, device="cuda"):
+        self.anonymizer = anonymizer
+        self.device = device
+        self.detector_wrapper = anonymizer.detector
+        self.dsfd_net = self.detector_wrapper.face_detector.net.to(device).eval()
+        self.mean_tensor = self.detector_wrapper.face_mean.to(device).float().flatten().view(1, 3, 1, 1)
 
-    def run_benchmark(self, epsilons=[2.0, 4.0, 8.0, 16.0, 24.0, 32.0], num_samples=100):
-        checkpoint_path = os.path.join(self.output_dir, "benchmark_checkpoint.csv")
+    def count_faces(self, img_tensor):
+        detector_input = img_tensor.detach().byte().float()
+        with torch.no_grad():
+            detections = self.detector_wrapper(detector_input)
+        if len(detections) > 0 and detections[0] is not None:
+            return len(detections[0])
+        return 0
+
+    def run_benchmark(self, dataset_loader, epsilons=[2.0, 4.0, 8.0, 16.0, 24.0, 32.0], alpha=2.0, iterations=150, output_dir="./results"):
+        os.makedirs(output_dir, exist_ok=True)
         results = []
 
-        for idx in range(min(num_samples, len(self.dataset))):
-            img_tensor, path = self.dataset[idx]
+        print("Avvio del Benchmark PGD...")
+        for eps in epsilons:
+            print(f"\nInizio test con epsilon = {eps}...")
+            
+            for idx, batch in enumerate(tqdm(dataset_loader)):
+                # Supponendo di gestire tensori immagine [C, H, W] in range [0, 255]
+                img_orig_tensor = batch[0].float().to(self.device) if isinstance(batch, (list, tuple)) else batch.float().to(self.device)
+                
+                clean_faces = self.count_faces(img_orig_tensor)
+                if clean_faces == 0:
+                    continue  # Salta immagini senza volti rilevati in partenza
 
-            # Baseline Check
-            orig_detections = self.attack.detector.count_detections(img_tensor)
-            if orig_detections != 1:
-                continue  # Considera solo immagini single-face valide
+                # Esecuzione attacco PGD
+                img_adv, success, succ_iter = pgd_attack(
+                    self.detector_wrapper, self.dsfd_net, self.mean_tensor, 
+                    img_orig_tensor, epsilon=eps, alpha=alpha, iterations=iterations, device=self.device
+                )
 
-            for eps in epsilons:
-                print(f"Inizio epsilon {eps} con {num_samples} campioni...")
-                start_time = time.time()
-                adv_tensor = self.attack.attack(img_tensor, epsilon=eps)
-                elapsed_time = time.time() - start_time
+                adv_faces = self.count_faces(img_adv)
+                evaded = (adv_faces == 0)
 
-                adv_detections = self.attack.detector.count_detections(adv_tensor)
-                evaded = (adv_detections == 0)
+                # Metriche
+                metrics = calculate_perturbation_metrics(img_orig_tensor, img_adv)
 
-                # De-identification pipeline test
-                anon_out = self.target.process_image(adv_tensor)
-                p_mse = compute_pipeline_mse(adv_tensor.cpu().numpy().transpose(1, 2, 0), anon_out)
-
-                p_metrics = calculate_perturbation_metrics(img_tensor, adv_tensor)
-
-                res = {
-                    "image": os.path.basename(path),
+                results.append({
                     "epsilon": eps,
                     "evaded": evaded,
-                    "pipeline_mse": p_mse,
-                    "execution_time": elapsed_time,
-                    **p_metrics
-                }
-                results.append(res)
+                    "detector_evasion": evaded,
+                    "pipeline_mse": metrics["mse"],
+                    "l2": metrics["l2"],
+                    "linf": metrics["linf"],
+                    "psnr": metrics["psnr"],
+                    "iterations": succ_iter if succ_iter is not None else iterations
+                })
 
         df = pd.DataFrame(results)
-        df.to_csv(os.path.join(self.output_dir, "full_results.csv"), index=False)
+        csv_path = os.path.join(output_dir, "benchmark_results.csv")
+        df.to_csv(csv_path, index=False)
+        print(f"\nBenchmark completato con successo. Risultati salvati in {csv_path}")
         return df
