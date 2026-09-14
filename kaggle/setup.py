@@ -3,20 +3,24 @@ import os
 import subprocess
 
 def setup_environment():
-    print("Installazione del pacchetto 'tops' da hukkelas/torch_ops...")
     env = dict(os.environ, GIT_TERMINAL_PROMPT="0")
     
-    url = "git+https://github.com/hukkelas/torch_ops.git"
+    dependencies = [
+        ("face-detection (DSFD)", "git+https://github.com/hukkelas/DSFD-Pytorch-Inference.git"),
+        ("tops (torch_ops)", "git+https://github.com/hukkelas/torch_ops.git")
+    ]
     
-    try:
-        subprocess.check_call(
-            [sys.executable, "-m", "pip", "install", url, "--quiet"],
-            env=env
-        )
-        print(" Pacchetto 'tops' (torch_ops) installato correttamente.")
-    except Exception as e:
-        print(f" Errore durante l'installazione di torch_ops: {e}")
-        raise RuntimeError("Impossibile installare 'tops' da torch_ops.") from e
+    for name, url in dependencies:
+        print(f"Installazione di {name}...")
+        try:
+            subprocess.check_call(
+                [sys.executable, "-m", "pip", "install", url, "--quiet"],
+                env=env
+            )
+            print(f" Pacchetto {name} installato correttamente.")
+        except Exception as e:
+            print(f" Errore durante l'installazione di {name}: {e}")
+            raise RuntimeError(f"Impossibile installare {name}.") from e
 
     print("Ambiente Kaggle configurato con successo.")
 
