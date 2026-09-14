@@ -21,7 +21,7 @@ class DeepPrivacy2Target(BaseDeidentificationTarget):
         if repo_root.exists() and str(repo_root) not in sys.path:
             sys.path.insert(0, str(repo_root))
     
-        # Importa le funzioni di inferenza e configurazione da dp2
+        # Ora 'tops' è un pacchetto globale installato nell'ambiente Python da torch_ops
         from deep_privacy2.dp2.infer import build_trained_generator
         from deep_privacy2.dp2.config import load_config
     
