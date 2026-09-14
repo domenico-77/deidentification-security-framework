@@ -7,7 +7,7 @@ import sys
 from pathlib import Path  # <-- Mancava questo import
 import torch
 import numpy as np
-from targets.base_target import BaseDeidentificationTarget
+from targets.base_deidentification_target import BaseDeidentificationTarget
 
 # Adapter di DP2 nel framework
 class DeepPrivacy2Target(BaseDeidentificationTarget):
