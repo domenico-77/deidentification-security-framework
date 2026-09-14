@@ -4,6 +4,7 @@ Rappresenta il target da sottoporre al test di sicurezza
 
 
 import sys
+import types
 from pathlib import Path  # <-- Mancava questo import
 import torch
 import numpy as np
