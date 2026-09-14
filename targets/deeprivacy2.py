@@ -19,6 +19,15 @@ except ModuleNotFoundError:
     motpy.MultiObjectTracker = object
     sys.modules["motpy"] = motpy
 
+# Mock di OpenAI CLIP per evitare la dipendenza
+try:
+    import clip
+except ModuleNotFoundError:
+    clip = types.ModuleType("clip")
+    clip.load = lambda *args, **kwargs: (None, None)
+    clip.tokenize = lambda *args, **kwargs: None
+    sys.modules["clip"] = clip
+
 # 2. Mock dei componenti CSE/Person di DeepPrivacy2 che dipendono da DensePose
 fake_cse_detector = types.ModuleType("dp2.detection.cse_mask_face_detector")
 fake_cse_detector.CSeMaskFaceDetector = None
