@@ -19,16 +19,25 @@ class DeepPrivacy2Target(BaseDeidentificationTarget):
         repo_root = Path("/kaggle/input/datasets/domenicovicenti/deep-privacy2-repository")
         dp2_inner = repo_root / "deep_privacy2"
         
-        # Aggiunge sia la root (per 'deep_privacy2') sia la sotto-cartella inner (per gli import 'dp2')
+        # Registra i path necessari nel sys.path
         for path in [repo_root, dp2_inner]:
             if path.exists() and str(path) not in sys.path:
                 sys.path.insert(0, str(path))
     
-        from deep_privacy2.dp2.infer import build_trained_generator
-        from deep_privacy2.dp2.config import load_config
+        # Import flessibile per la gestione delle configurazioni
+        try:
+            from dp2.config import load_config
+        except ImportError:
+            try:
+                from deep_privacy2.dp2.config import load_config
+            except ImportError:
+                from dp2.infer import load_config
     
-        cfg = load_config("fdf128", models_dir=models_dir)
-        return build_trained_generator(cfg)
+        from dp2.infer import build_trained_generator
+
+    # Carica la configurazione ed istanzia il generatore
+    cfg = load_config("fdf128", models_dir=models_dir)
+    return build_trained_generator(cfg)
 
     def process_image(self, image_tensor: torch.Tensor) -> np.ndarray:
         """
