@@ -15,38 +15,40 @@ from targets.base_target import BaseDeidentificationTarget
 repo_root = Path("/kaggle/input/datasets/domenicovicenti/deep-privacy2-repository").resolve()
 dp2_inner = repo_root / "deep_privacy2"
 
-for p in [repo_root, dp2_inner]:
+for p in [dp2_inner, repo_root]:
     if p.exists() and str(p) not in sys.path:
         sys.path.insert(0, str(p))
 
-# 2. Patch robusta di dp2.utils.load_config per risolvere tutti i percorsi relativi di configurazione
+# 2. Definizione funzione di risoluzione e patch globale
+def _resolve_config_path(config_path):
+    cfg_path = Path(config_path)
+    if not cfg_path.is_absolute() or not cfg_path.is_file():
+        candidate = repo_root / cfg_path
+        if candidate.is_file():
+            return candidate
+        candidate_inner = dp2_inner / cfg_path
+        if candidate_inner.is_file():
+            return candidate_inner
+        matches = list(repo_root.glob(f"**/{cfg_path.name}"))
+        if matches:
+            return matches[0]
+    return cfg_path
+
 try:
     import dp2.utils
     _original_load_config = dp2.utils.load_config
 
     def _patched_load_config(config_path, *args, **kwargs):
-        cfg_path = Path(config_path)
-        
-        # Se non è assoluto o non esiste nel CWD corrente, cercalo nella repo
-        if not cfg_path.is_absolute() or not cfg_path.is_file():
-            # Tentativo 1: Risoluzione diretta rispetto a repo_root
-            candidate = repo_root / cfg_path
-            if candidate.is_file():
-                cfg_path = candidate
-            else:
-                # Tentativo 2: Risoluzione rispetto a dp2_inner
-                candidate_inner = dp2_inner / cfg_path
-                if candidate_inner.is_file():
-                    cfg_path = candidate_inner
-                else:
-                    # Tentativo 3: Ricerca ricorsiva per nome file
-                    matches = list(repo_root.glob(f"**/{cfg_path.name}"))
-                    if matches:
-                        cfg_path = matches[0]
+        resolved = _resolve_config_path(config_path)
+        return _original_load_config(resolved, *args, **kwargs)
 
-        return _original_load_config(cfg_path, *args, **kwargs)
-
+    # Patch del modulo sorgente
     dp2.utils.load_config = _patched_load_config
+
+    # Patch diretta nei moduli che hanno già importato `load_config`
+    for mod_name in ["dp2.anonymizer.anonymizer", "dp2.anonymizer", "dp2.infer"]:
+        if mod_name in sys.modules:
+            setattr(sys.modules[mod_name], "load_config", _patched_load_config)
 except ImportError:
     pass
 
@@ -124,18 +126,12 @@ class DeepPrivacy2Target(BaseDeidentificationTarget):
         if config_path is None or config_path in ["fdf128", "stylegan_fdf128"]:
             config_path = "face_fdf128"
 
-        cfg_path = Path(config_path)
+        cfg_path = _resolve_config_path(config_path)
         if not cfg_path.suffix:
-            cfg_path = Path(f"{config_path}.py")
+            cfg_path = _resolve_config_path(f"{config_path}.py")
 
         if not cfg_path.exists():
-            candidates = list(repo_root.glob(f"**/configs/**/{cfg_path.name}"))
-            if not candidates:
-                candidates = list(repo_root.glob(f"**/{cfg_path.name}"))
-            if candidates:
-                cfg_path = candidates[0]
-            else:
-                raise FileNotFoundError(f"Impossibile trovare la configurazione {cfg_path.name} in {repo_root}")
+            raise FileNotFoundError(f"Impossibile trovare la configurazione {config_path} in {repo_root}")
 
         cfg = LazyConfig.load(str(cfg_path))
 
@@ -157,6 +153,11 @@ class DeepPrivacy2Target(BaseDeidentificationTarget):
         orig_cwd = os.getcwd()
         try:
             os.chdir(str(repo_root))
+            
+            # Assicura la patch all'interno di dp2.anonymizer.anonymizer se viene importato durante instantiate
+            import dp2.anonymizer.anonymizer as anon_mod
+            anon_mod.load_config = _patched_load_config
+
             if hasattr(cfg, "anonymizer"):
                 pipeline = instantiate(cfg.anonymizer)
             elif hasattr(cfg, "generator"):
