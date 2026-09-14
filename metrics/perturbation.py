@@ -1,22 +1,25 @@
 import torch
 
-
-def calculate_perturbation_metrics(orig_tensor: torch.Tensor, adv_tensor: torch.Tensor):
-    """Calcola le distanze di perturbazione L_inf, L2, MSE e PSNR."""
-    diff = adv_tensor.float() - orig_tensor.float()
-
-    l_inf = torch.max(torch.abs(diff)).item()
-    l2 = torch.norm(diff).item()
-    mse = torch.mean(diff ** 2).item()
-
-    if mse == 0:
-        psnr = float('inf')
-    else:
-        psnr = 20 * torch.log10(255.0 / torch.sqrt(torch.tensor(mse))).item()
-
+def calculate_perturbation_metrics(orig_tensor, adv_tensor):
+    """
+    Calcola le metriche di perturbazione (es. L2, Linf) tra l'immagine originale
+    e quella avversaria, garantendo la compatibilità dei dispositivi.
+    """
+    # Sposta entrambi i tensori sullo stesso dispositivo (preferibilmente CPU per i calcoli metrici o GPU)
+    device = orig_tensor.device
+    adv_tensor = adv_tensor.to(device)
+    
+    orig_f = orig_tensor.float()
+    adv_f = adv_tensor.float()
+    
+    # Calcolo delle differenze
+    diff = adv_f - orig_f
+    
+    # Calcolo delle norme di perturbazione
+    l2_norm = torch.norm(diff.view(diff.size(0), -1), p=2, dim=1).mean().item()
+    linf_norm = torch.max(torch.abs(diff.view(diff.size(0), -1)), dim=1)[0].mean().item()
+    
     return {
-        "l_inf": l_inf,
-        "l_2": l2,
-        "mse": mse,
-        "psnr_db": psnr
+        "l2": l2_norm,
+        "linf": linf_norm
     }
