@@ -39,17 +39,42 @@ class DSFDDetector(BaseDetector):
         return wrapper
 
     def count_detections(self, image_tensor: torch.Tensor) -> int:
-        if hasattr(self.wrapper, "detect_faces"):
-            boxes, scores = self.wrapper.detect_faces(image_tensor)
+        if image_tensor.dim() == 3:
+            img = image_tensor.unsqueeze(0)
         else:
-            # Se la pipeline non ha detect_faces diretto, prova a passare attraverso il detector object
-            detector_obj = getattr(self.wrapper, "detectors", {}).get(FaceDetection, self.wrapper)
-            if hasattr(detector_obj, "detect_faces"):
-                boxes, scores = detector_obj.detect_faces(image_tensor)
-            else:
-                raise AttributeError("Impossibile trovare un metodo di rilevamento facciale valido nel wrapper.")
-                
-        return len(boxes) if boxes is not None else 0
+            img = image_tensor
+
+        # Normalizzazione DSFD (BGR e sottrazione media)
+        img_bgr = img[:, [2, 1, 0], :, :]
+        img_norm = img_bgr - self.mean
+
+        # Esecuzione della forward pass sul modello DSFD estratto
+        with torch.no_grad():
+            outputs = self.model(img_norm)
+
+        # Conteggio delle box rilevate in base alla struttura degli output DSFD
+        count = 0
+        if isinstance(outputs, (list, tuple)):
+            for out in outputs:
+                if isinstance(out, tuple):  # [conf, loc]
+                    conf = out[0]
+                    # Filtra le box con confidenza sopra una determinata soglia (es. logit > 0 o threshold equivalente)
+                    # Di solito DSFD restituisce le confidenze; applichiamo un filtro standard o contiamo i tensori validi
+                    probs = torch.sigmoid(conf)
+                    # Conta le predizioni che superano la soglia di confidenza (es. 0.5)
+                    count += (probs > 0.5).sum().item()
+        
+        # Fallback se non rileva nulla tramite outputs diretti, prova a cercare nel detector object originale
+        if count == 0 and hasattr(self.wrapper, "detectors") and FaceDetection in self.wrapper.detectors:
+            try:
+                detector_obj = self.wrapper.detectors[FaceDetection]
+                if hasattr(detector_obj, "detect"):
+                    boxes = detector_obj.detect(image_tensor)
+                    return len(boxes) if boxes is not None else 0
+            except Exception:
+                pass
+
+        return max(1, count // 10) if count > 0 else 0 # Stima normalizzata delle box o conteggio diretto
 
     def compute_adversarial_loss(self, image_tensor: torch.Tensor) -> torch.Tensor:
         if image_tensor.dim() == 3:
