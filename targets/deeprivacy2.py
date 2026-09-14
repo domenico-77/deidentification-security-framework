@@ -91,12 +91,14 @@ class DeepPrivacy2Target(BaseDeidentificationTarget):
 
         cfg = LazyConfig.load(str(cfg_path))
 
-        cfg.detector.name = "dsfd"
-
         if models_dir:
             cfg.models_dir = models_dir
 
-        # Istanziazione diretta dell'anonymizer dalla configurazione
+        # Rimozione di eventuali parametri 'name' iniettati che rompono BaseDetector.__init__
+        if hasattr(cfg, "detector") and hasattr(cfg.detector, "name"):
+            del cfg.detector.name
+
+        # Istanziazione corretta del modulo anonymizer
         if hasattr(cfg, "anonymizer"):
             return instantiate(cfg.anonymizer)
         elif hasattr(cfg, "generator"):
