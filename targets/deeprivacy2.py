@@ -10,6 +10,27 @@ import torch
 import numpy as np
 from targets.base_target import BaseDeidentificationTarget
 
+# 1. Trova il file di pesi dal dataset Kaggle
+weights_src = Path("/kaggle/input/datasets/domenicovicenti/deep-privacy2-models/WIDERFace_DSFD_RES152.pth")
+
+if weights_src.exists():
+    # 2. Crea la cartella di cache standard di PyTorch Hub
+    cache_dir = Path("/root/.cache/torch/hub/checkpoints")
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    
+    # 3. Copia il file con il nome originale e con l'hash atteso
+    expected_filename = "61be4ec7-8c11-4a4a-a9f4-827144e4ab4f0c2764c1-80a0-4083-bbfa-68419f889b80e4692358-979b-458e-97da-c1a1660b3314"
+    
+    shutil.copy(weights_src, cache_dir / "WIDERFace_DSFD_RES152.pth")
+    shutil.copy(weights_src, cache_dir / expected_filename)
+
+    # 4. Patch di download_url_to_file per evitare qualsiasi richiesta URL
+    def _noop_download(url, dst, *args, **kwargs):
+        if not Path(dst).exists():
+            shutil.copy(weights_src, dst)
+
+    torch.hub.download_url_to_file = _noop_download
+    
 # 1. Mock di motpy se non presente
 try:
     import motpy
