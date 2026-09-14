@@ -115,6 +115,7 @@ class DeepPrivacy2Target(BaseDeidentificationTarget):
         self.pipeline = self._load_pipeline(config_path, models_dir)
 
     def _load_pipeline(self, config_path, models_dir):
+        import os
         from tops.config import LazyConfig, instantiate
     
         if config_path is None or config_path in ["fdf128", "stylegan_fdf128"]:
