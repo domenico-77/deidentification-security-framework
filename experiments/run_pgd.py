@@ -27,7 +27,18 @@ def main():
     # Inizializzazione Modelli
     target = DeepPrivacy2Target(models_dir=config['target']['models_dir'])
     detector = DSFDDetector(target.pipeline)
-    attack = PGDAttack(detector)
+    # Estrazione dei componenti necessari per PGDAttack
+    detector_wrapper = anonymizer.detector
+    dsfd_net = detector_wrapper.face_detector.net.to(device).eval()
+    mean_tensor = detector_wrapper.face_mean.to(device).float().flatten().view(1, 3, 1, 1)
+    
+    # Istanziazione corretta della classe PGDAttack
+    attack = PGDAttack(
+        detector_wrapper=detector_wrapper,
+        dsfd_net=dsfd_net,
+        mean_tensor=mean_tensor,
+        device=device
+    )
 
     dataset = LFWDataset(root_dir=args.dataset_path)
     runner = BenchmarkRunner(target, attack, dataset)
