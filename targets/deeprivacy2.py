@@ -23,19 +23,20 @@ class DeepPrivacy2Target(BaseDeidentificationTarget):
                 sys.path.insert(0, str(path))
 
         from dp2.infer import build_trained_generator
-        from tops.config import LazyConfig
+        import dp2.config as dp2_cfg
 
-        # Se config_path è None, imposta il default "fdf128"
         if config_path is None:
             config_path = "fdf128"
 
-        # Caricamento della configurazione tramite LazyConfig
-        if hasattr(LazyConfig, "get_config"):
-            cfg = LazyConfig.get_config(config_path)
+        # Carica la configurazione tramite il modulo nativo dp2
+        if hasattr(dp2_cfg, "load_config"):
+            cfg = dp2_cfg.load_config(config_path)
+        elif hasattr(dp2_cfg, "get_config"):
+            cfg = dp2_cfg.get_config(config_path)
         else:
-            cfg = LazyConfig.from_file(config_path)
-        
-        # Se models_dir è fornito, aggiorna il percorso di caricamento dei modelli
+            from tops.config import LazyConfig
+            cfg = LazyConfig.load(config_path)
+
         if models_dir:
             cfg.models_dir = models_dir
 
