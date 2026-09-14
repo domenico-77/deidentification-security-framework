@@ -19,40 +19,10 @@ except ModuleNotFoundError:
     motpy.MultiObjectTracker = object
     sys.modules["motpy"] = motpy
 
-# Mock di densepose per evitare ModuleNotFoundError importando dp2.utils
-try:
-    import densepose
-except ModuleNotFoundError:
-    densepose = types.ModuleType("densepose")
-    
-    # Aggiungi funzioni di configurazione fittizie chiamate durante gli import
-    densepose.add_densepose_config = lambda *args, **kwargs: None
-    
-    # Mock modeling/cse
-    modeling = types.ModuleType("densepose.modeling")
-    cse = types.ModuleType("densepose.modeling.cse")
-    cse_utils = types.ModuleType("densepose.modeling.cse.utils")
-    cse_utils.get_closest_vertices_mask_from_ES = lambda *args, **kwargs: None
-    
-    cse.utils = cse_utils
-    modeling.cse = cse
-    densepose.modeling = modeling
-    
-    # Mock data/utils
-    data = types.ModuleType("densepose.data")
-    data_utils = types.ModuleType("densepose.data.utils")
-    data_utils.get_class_to_mesh_name_mapping = lambda *args, **kwargs: {}
-    
-    data.utils = data_utils
-    densepose.data = data
-    
-    # Registrazione in sys.modules
-    sys.modules["densepose"] = densepose
-    sys.modules["densepose.modeling"] = modeling
-    sys.modules["densepose.modeling.cse"] = cse
-    sys.modules["densepose.modeling.cse.utils"] = cse_utils
-    sys.modules["densepose.data"] = data
-    sys.modules["densepose.data.utils"] = data_utils
+# Disabilita completamente l'import del detector CSE (DensePose)
+fake_cse_module = types.ModuleType("dp2.detection.cse_mask_face_detector")
+fake_cse_module.CSeMaskFaceDetector = None
+sys.modules["dp2.detection.cse_mask_face_detector"] = fake_cse_module
 
 
 class DeepPrivacy2Target(BaseDeidentificationTarget):
@@ -87,6 +57,7 @@ class DeepPrivacy2Target(BaseDeidentificationTarget):
                 raise FileNotFoundError(f"Impossibile trovare la configurazione {cfg_path.name} in {repo_root}")
 
         cfg = LazyConfig.load(str(cfg_path))
+        cfg.detector.name = "dsfd"
 
         if models_dir:
             cfg.models_dir = models_dir
