@@ -7,7 +7,8 @@ def setup_environment():
     
     dependencies = [
         ("face-detection (DSFD)", "git+https://github.com/hukkelas/DSFD-Pytorch-Inference.git"),
-        ("tops (torch_ops)", "git+https://github.com/hukkelas/torch_ops.git")
+        ("tops (torch_ops)", "git+https://github.com/hukkelas/torch_ops.git"),
+        ("torch-fidelity", "torch-fidelity")
     ]
     
     for name, url in dependencies:
