@@ -20,7 +20,7 @@ class DSFDDetector(BaseDetector):
         self.mean = torch.tensor([104.0, 117.0, 123.0], device=self.device).view(1, 3, 1, 1)
 
     def _extract_pure_nn_module(self, wrapper):
-        """Esplora in profondità la struttura di DeepPrivacy2 per estrarre la vera nn.Module di DSFD."""
+        """Esplora la struttura di DeepPrivacy2 per estrarre la vera nn.Module di DSFD."""
         detector_obj = None
         if hasattr(wrapper, "detectors") and FaceDetection in wrapper.detectors:
             detector_obj = wrapper.detectors[FaceDetection]
@@ -31,14 +31,12 @@ class DSFDDetector(BaseDetector):
         else:
             detector_obj = wrapper
 
-        # 1. Cerca attributi noti che contengono la rete
         for attr in ["net", "model", "detector", "backbone", "body"]:
             if hasattr(detector_obj, attr):
                 val = getattr(detector_obj, attr)
                 if isinstance(val, nn.Module) and type(val).__name__ != 'FaceDetector':
                     return val
 
-        # 2. Esplorazione ricorsiva tra gli attributi dell'oggetto detector
         queue = [detector_obj]
         visited = set()
         
@@ -92,7 +90,14 @@ class DSFDDetector(BaseDetector):
             
         img_norm = img_bgr - self.mean.to(self.device)
 
-        outputs = self.model(img_norm)
+        # Invocazione della forward pass passando le soglie richieste da SSD/DSFD
+        try:
+            outputs = self.model(img_norm, 0.01, 0.45)
+        except TypeError:
+            try:
+                outputs = self.model(img_norm, confidence_threshold=0.01, nms_threshold=0.45)
+            except Exception:
+                outputs = self.model(img_norm)
 
         # Loss: Soppressione delle logit di confidenza delle bounding box
         loss = 0.0
