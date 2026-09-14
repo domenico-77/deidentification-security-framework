@@ -2,10 +2,10 @@
 Rappresenta il target da sottoporre al test di sicurezza
 """
 
-
 import sys
 import types
 import shutil
+import os
 from pathlib import Path
 import torch
 import numpy as np
@@ -19,49 +19,56 @@ for p in [repo_root, dp2_inner]:
     if p.exists() and str(p) not in sys.path:
         sys.path.insert(0, str(p))
 
-# 2. Patch di dp2.utils.load_config per risolvere i percorsi relativi
+# 2. Patch robusta di dp2.utils.load_config per risolvere tutti i percorsi relativi di configurazione
 try:
     import dp2.utils
     _original_load_config = dp2.utils.load_config
 
     def _patched_load_config(config_path, *args, **kwargs):
         cfg_path = Path(config_path)
-        if not cfg_path.is_absolute() and not cfg_path.is_file():
-            # Cerca il file all'interno del dataset repo_root
+        
+        # Se non è assoluto o non esiste nel CWD corrente, cercalo nella repo
+        if not cfg_path.is_absolute() or not cfg_path.is_file():
+            # Tentativo 1: Risoluzione diretta rispetto a repo_root
             candidate = repo_root / cfg_path
             if candidate.is_file():
                 cfg_path = candidate
             else:
-                matches = list(repo_root.glob(f"**/{cfg_path.name}"))
-                if matches:
-                    cfg_path = matches[0]
+                # Tentativo 2: Risoluzione rispetto a dp2_inner
+                candidate_inner = dp2_inner / cfg_path
+                if candidate_inner.is_file():
+                    cfg_path = candidate_inner
+                else:
+                    # Tentativo 3: Ricerca ricorsiva per nome file
+                    matches = list(repo_root.glob(f"**/{cfg_path.name}"))
+                    if matches:
+                        cfg_path = matches[0]
+
         return _original_load_config(cfg_path, *args, **kwargs)
 
     dp2.utils.load_config = _patched_load_config
 except ImportError:
     pass
-# 1. Trova il file di pesi dal dataset Kaggle
+
+# 3. Patch di PyTorch Hub per i pesi DSFD (offline mode)
 weights_src = Path("/kaggle/input/datasets/domenicovicenti/deep-privacy2-models/WIDERFace_DSFD_RES152.pth")
 
 if weights_src.exists():
-    # 2. Crea la cartella di cache standard di PyTorch Hub
     cache_dir = Path("/root/.cache/torch/hub/checkpoints")
     cache_dir.mkdir(parents=True, exist_ok=True)
     
-    # 3. Copia il file con il nome originale e con l'hash atteso
     expected_filename = "61be4ec7-8c11-4a4a-a9f4-827144e4ab4f0c2764c1-80a0-4083-bbfa-68419f889b80e4692358-979b-458e-97da-c1a1660b3314"
     
     shutil.copy(weights_src, cache_dir / "WIDERFace_DSFD_RES152.pth")
     shutil.copy(weights_src, cache_dir / expected_filename)
 
-    # 4. Patch di download_url_to_file per evitare qualsiasi richiesta URL
     def _noop_download(url, dst, *args, **kwargs):
         if not Path(dst).exists():
             shutil.copy(weights_src, dst)
 
     torch.hub.download_url_to_file = _noop_download
-    
-# 1. Mock di motpy se non presente
+
+# 4. Mock dipendenze opzionali / esterne
 try:
     import motpy
 except ModuleNotFoundError:
@@ -70,7 +77,6 @@ except ModuleNotFoundError:
     motpy.MultiObjectTracker = object
     sys.modules["motpy"] = motpy
 
-# Mock di OpenAI CLIP per evitare la dipendenza
 try:
     import clip
 except ModuleNotFoundError:
@@ -79,7 +85,6 @@ except ModuleNotFoundError:
     clip.tokenize = lambda *args, **kwargs: None
     sys.modules["clip"] = clip
 
-# 2. Mock dei componenti CSE/Person di DeepPrivacy2 che dipendono da DensePose
 fake_cse_detector = types.ModuleType("dp2.detection.cse_mask_face_detector")
 fake_cse_detector.CSeMaskFaceDetector = None
 sys.modules["dp2.detection.cse_mask_face_detector"] = fake_cse_detector
@@ -92,7 +97,6 @@ fake_dp2_utils_cse = types.ModuleType("dp2.utils.cse")
 fake_dp2_utils_cse.from_E_to_vertex = lambda *args, **kwargs: None
 sys.modules["dp2.utils.cse"] = fake_dp2_utils_cse
 
-# 3. Dummy fall-back universale per densepose se richiamato da file secondari
 try:
     import densepose
 except ModuleNotFoundError:
@@ -115,16 +119,15 @@ class DeepPrivacy2Target(BaseDeidentificationTarget):
         self.pipeline = self._load_pipeline(config_path, models_dir)
 
     def _load_pipeline(self, config_path, models_dir):
-        import os
         from tops.config import LazyConfig, instantiate
-    
+
         if config_path is None or config_path in ["fdf128", "stylegan_fdf128"]:
             config_path = "face_fdf128"
-    
+
         cfg_path = Path(config_path)
         if not cfg_path.suffix:
             cfg_path = Path(f"{config_path}.py")
-    
+
         if not cfg_path.exists():
             candidates = list(repo_root.glob(f"**/configs/**/{cfg_path.name}"))
             if not candidates:
@@ -133,25 +136,24 @@ class DeepPrivacy2Target(BaseDeidentificationTarget):
                 cfg_path = candidates[0]
             else:
                 raise FileNotFoundError(f"Impossibile trovare la configurazione {cfg_path.name} in {repo_root}")
-    
+
         cfg = LazyConfig.load(str(cfg_path))
-    
+
         if models_dir:
             cfg.models_dir = str(Path(models_dir).resolve())
-    
+
         if hasattr(cfg, "detector") and hasattr(cfg.detector, "name"):
             del cfg.detector.name
-    
+
         # Configurazione percorsi scrivibili assoluti su /tmp
         writable_output_dir = Path("/tmp/outputs").resolve()
         writable_output_dir.mkdir(parents=True, exist_ok=True)
         
         cfg.output_dir = str(writable_output_dir)
-    
+
         if hasattr(cfg, "detector"):
             cfg.detector.cache_directory = str(writable_output_dir / "face_detection_cache")
-    
-        # Mantieni l'esecuzione dentro repo_root per permettere a load_config() di trovare i percorsi relativi
+
         orig_cwd = os.getcwd()
         try:
             os.chdir(str(repo_root))
@@ -164,7 +166,7 @@ class DeepPrivacy2Target(BaseDeidentificationTarget):
                 pipeline = instantiate(cfg)
         finally:
             os.chdir(orig_cwd)
-    
+
         return pipeline
 
     def process_image(self, image: torch.Tensor, *args, **kwargs) -> np.ndarray:
