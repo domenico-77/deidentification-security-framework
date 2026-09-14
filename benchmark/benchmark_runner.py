@@ -1,10 +1,12 @@
 import os
+import time
 import torch
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
 from metrics.perturbation import calculate_perturbation_metrics
+from utils.logger import print_run_header, print_attack_results  # <-- Importiamo il logger
 
 class BenchmarkRunner:
     def __init__(self, target, attack, dataset, device="cuda"):
@@ -32,15 +34,22 @@ class BenchmarkRunner:
         results = []
 
         print("Avvio del Benchmark PGD...")
+        max_samples = min(num_samples, len(self.dataset)) if hasattr(self.dataset, "__len__") else num_samples
+        total_expected = len(epsilons) * max_samples
+        current_run_count = 0
+
         for eps in epsilons:
             print(f"\nInizio test con epsilon = {eps}...")
             
-            max_samples = min(num_samples, len(self.dataset)) if hasattr(self.dataset, "__len__") else num_samples
-            
             for idx in tqdm(range(max_samples)):
+                start_time = time.time()  # Per tracciare il tempo del singolo campione
+                
                 batch = self.dataset[idx]
                 # Gestisce sia tensori singoli che tuple restituite dal dataset loader
                 img_orig_tensor = batch[0].float().to(self.device) if isinstance(batch, (list, tuple)) else batch.float().to(self.device)
+                
+                # Nome immagine (fallback se il dataset non passa una stringa identificativa)
+                image_name = f"sample_{idx}.jpg"
                 
                 clean_faces = self.count_faces(img_orig_tensor)
                 if clean_faces == 0:
@@ -57,8 +66,28 @@ class BenchmarkRunner:
 
                 # Calcolo metriche di perturbazione corrette in scala [0, 255]
                 metrics = calculate_perturbation_metrics(img_orig_tensor, img_adv)
+                
+                elapsed_seconds = time.time() - start_time
+                current_run_count += 1
+
+                # -------------------------------------------------------------
+                # CHIAMATA AL LOGGER PER DETTAGLI SU TERMINALE
+                # -------------------------------------------------------------
+                print_run_header(idx + 1, max_samples, image_name, eps)
+                print_attack_results(
+                    detector_evasion=evaded,
+                    pipeline_bypass=True,  # O la tua logica di bypass specifica se presente
+                    attack_success=evaded, # True se evade il detector
+                    success_iteration=succ_iter,
+                    metrics=metrics,
+                    pipeline_mse=metrics["mse"],
+                    elapsed_seconds=elapsed_seconds,
+                    current_run_idx=current_run_count,
+                    total_expected=total_expected
+                )
 
                 results.append({
+                    "image": image_name,
                     "epsilon": eps,
                     "evaded": evaded,
                     "detector_evasion": evaded,
