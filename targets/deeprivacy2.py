@@ -2,7 +2,7 @@
 Rappresenta il target da sottoporre al test di sicurezza
 """
 
-
+import os
 import sys
 import types
 import shutil
