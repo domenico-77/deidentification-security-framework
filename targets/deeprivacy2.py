@@ -17,11 +17,13 @@ class DeepPrivacy2Target(BaseDeidentificationTarget):
 
     def _load_pipeline(self, config_path, models_dir):
         repo_root = Path("/kaggle/input/datasets/domenicovicenti/deep-privacy2-repository")
+        dp2_inner = repo_root / "deep_privacy2"
         
-        if repo_root.exists() and str(repo_root) not in sys.path:
-            sys.path.insert(0, str(repo_root))
+        # Aggiunge sia la root (per 'deep_privacy2') sia la sotto-cartella inner (per gli import 'dp2')
+        for path in [repo_root, dp2_inner]:
+            if path.exists() and str(path) not in sys.path:
+                sys.path.insert(0, str(path))
     
-        # Ora 'tops' è un pacchetto globale installato nell'ambiente Python da torch_ops
         from deep_privacy2.dp2.infer import build_trained_generator
         from deep_privacy2.dp2.config import load_config
     
