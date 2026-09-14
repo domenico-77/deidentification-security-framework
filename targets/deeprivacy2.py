@@ -71,8 +71,7 @@ class DeepPrivacy2Target(BaseDeidentificationTarget):
             if path.exists() and str(path) not in sys.path:
                 sys.path.insert(0, str(path))
 
-        from dp2.infer import build_trained_generator
-        from tops.config import LazyConfig
+        from tops.config import LazyConfig, instantiate
 
         if config_path is None or config_path in ["fdf128", "stylegan_fdf128"]:
             config_path = "face_fdf128"
@@ -97,7 +96,14 @@ class DeepPrivacy2Target(BaseDeidentificationTarget):
         if models_dir:
             cfg.models_dir = models_dir
 
-        return build_trained_generator(cfg)
+        # Istanziazione diretta dell'anonymizer dalla configurazione
+        if hasattr(cfg, "anonymizer"):
+            return instantiate(cfg.anonymizer)
+        elif hasattr(cfg, "generator"):
+            from dp2.infer import build_trained_generator
+            return build_trained_generator(cfg)
+        else:
+            return instantiate(cfg)
 
     def process_image(self, image: torch.Tensor, *args, **kwargs) -> np.ndarray:
         if isinstance(image, torch.Tensor):
