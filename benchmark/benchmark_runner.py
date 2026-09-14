@@ -27,6 +27,7 @@ class BenchmarkRunner:
                 continue  # Considera solo immagini single-face valide
 
             for eps in epsilons:
+                print(f"Inizio epsilon {eps} con {num_samples} campioni...")
                 start_time = time.time()
                 adv_tensor = self.attack.attack(img_tensor, epsilon=eps)
                 elapsed_time = time.time() - start_time
