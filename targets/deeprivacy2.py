@@ -25,6 +25,9 @@ try:
 except ModuleNotFoundError:
     densepose = types.ModuleType("densepose")
     
+    # Aggiungi funzioni di configurazione fittizie chiamate durante gli import
+    densepose.add_densepose_config = lambda *args, **kwargs: None
+    
     # Mock modeling/cse
     modeling = types.ModuleType("densepose.modeling")
     cse = types.ModuleType("densepose.modeling.cse")
@@ -35,7 +38,7 @@ except ModuleNotFoundError:
     modeling.cse = cse
     densepose.modeling = modeling
     
-    # Mock data/utils (richiesto da dp2.detection.models.cse)
+    # Mock data/utils
     data = types.ModuleType("densepose.data")
     data_utils = types.ModuleType("densepose.data.utils")
     data_utils.get_class_to_mesh_name_mapping = lambda *args, **kwargs: {}
@@ -43,7 +46,7 @@ except ModuleNotFoundError:
     data.utils = data_utils
     densepose.data = data
     
-    # Registrazione dei moduli in sys.modules
+    # Registrazione in sys.modules
     sys.modules["densepose"] = densepose
     sys.modules["densepose.modeling"] = modeling
     sys.modules["densepose.modeling.cse"] = cse
