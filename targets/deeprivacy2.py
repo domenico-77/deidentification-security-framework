@@ -9,6 +9,15 @@ import torch
 import numpy as np
 from targets.base_target import BaseDeidentificationTarget
 
+# Mock di motpy se non presente nell'ambiente
+try:
+    import motpy
+except ModuleNotFoundError:
+    motpy = types.ModuleType("motpy")
+    motpy.Detection = object
+    motpy.MultiObjectTracker = object
+    sys.modules["motpy"] = motpy
+
 # Adapter di DP2 nel framework
 class DeepPrivacy2Target(BaseDeidentificationTarget):
     def __init__(self, config_path: str = "stylegan_fdf128", models_dir: str = None):
