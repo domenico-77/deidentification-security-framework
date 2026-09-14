@@ -11,6 +11,35 @@ import torch
 import numpy as np
 from targets.base_target import BaseDeidentificationTarget
 
+# 1. Definizione percorsi e import di base
+repo_root = Path("/kaggle/input/datasets/domenicovicenti/deep-privacy2-repository").resolve()
+dp2_inner = repo_root / "deep_privacy2"
+
+for p in [repo_root, dp2_inner]:
+    if p.exists() and str(p) not in sys.path:
+        sys.path.insert(0, str(p))
+
+# 2. Patch di dp2.utils.load_config per risolvere i percorsi relativi
+try:
+    import dp2.utils
+    _original_load_config = dp2.utils.load_config
+
+    def _patched_load_config(config_path, *args, **kwargs):
+        cfg_path = Path(config_path)
+        if not cfg_path.is_absolute() and not cfg_path.is_file():
+            # Cerca il file all'interno del dataset repo_root
+            candidate = repo_root / cfg_path
+            if candidate.is_file():
+                cfg_path = candidate
+            else:
+                matches = list(repo_root.glob(f"**/{cfg_path.name}"))
+                if matches:
+                    cfg_path = matches[0]
+        return _original_load_config(cfg_path, *args, **kwargs)
+
+    dp2.utils.load_config = _patched_load_config
+except ImportError:
+    pass
 # 1. Trova il file di pesi dal dataset Kaggle
 weights_src = Path("/kaggle/input/datasets/domenicovicenti/deep-privacy2-models/WIDERFace_DSFD_RES152.pth")
 
@@ -86,23 +115,15 @@ class DeepPrivacy2Target(BaseDeidentificationTarget):
         self.pipeline = self._load_pipeline(config_path, models_dir)
 
     def _load_pipeline(self, config_path, models_dir):
-        import os
-        repo_root = Path("/kaggle/input/datasets/domenicovicenti/deep-privacy2-repository").resolve()
-        dp2_inner = repo_root / "deep_privacy2"
-        
-        for path in [repo_root, dp2_inner]:
-            if path.exists() and str(path) not in sys.path:
-                sys.path.insert(0, str(path))
-
         from tops.config import LazyConfig, instantiate
-
+    
         if config_path is None or config_path in ["fdf128", "stylegan_fdf128"]:
             config_path = "face_fdf128"
-
+    
         cfg_path = Path(config_path)
         if not cfg_path.suffix:
             cfg_path = Path(f"{config_path}.py")
-
+    
         if not cfg_path.exists():
             candidates = list(repo_root.glob(f"**/configs/**/{cfg_path.name}"))
             if not candidates:
@@ -111,24 +132,24 @@ class DeepPrivacy2Target(BaseDeidentificationTarget):
                 cfg_path = candidates[0]
             else:
                 raise FileNotFoundError(f"Impossibile trovare la configurazione {cfg_path.name} in {repo_root}")
-
+    
         cfg = LazyConfig.load(str(cfg_path))
-
+    
         if models_dir:
             cfg.models_dir = str(Path(models_dir).resolve())
-
+    
         if hasattr(cfg, "detector") and hasattr(cfg.detector, "name"):
             del cfg.detector.name
-
+    
         # Configurazione percorsi scrivibili assoluti su /tmp
         writable_output_dir = Path("/tmp/outputs").resolve()
         writable_output_dir.mkdir(parents=True, exist_ok=True)
         
         cfg.output_dir = str(writable_output_dir)
-
+    
         if hasattr(cfg, "detector"):
             cfg.detector.cache_directory = str(writable_output_dir / "face_detection_cache")
-
+    
         # Mantieni l'esecuzione dentro repo_root per permettere a load_config() di trovare i percorsi relativi
         orig_cwd = os.getcwd()
         try:
@@ -142,7 +163,7 @@ class DeepPrivacy2Target(BaseDeidentificationTarget):
                 pipeline = instantiate(cfg)
         finally:
             os.chdir(orig_cwd)
-
+    
         return pipeline
 
     def process_image(self, image: torch.Tensor, *args, **kwargs) -> np.ndarray:
