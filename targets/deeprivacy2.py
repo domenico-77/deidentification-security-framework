@@ -1,5 +1,5 @@
 """
-Rappresenta il target da sottoporre al test di sicurezza
+Rappresenta il target da sottoporre al test di sicurezza (DeepPrivacy2)
 """
 
 import sys
@@ -11,7 +11,7 @@ import torch
 import numpy as np
 from targets.base_target import BaseDeidentificationTarget
 
-# 1. Definizione percorsi e import di base
+# 1. Definizione percorsi di base e sys.path
 repo_root = Path("/kaggle/input/datasets/domenicovicenti/deep-privacy2-repository").resolve()
 dp2_inner = repo_root / "deep_privacy2"
 
@@ -19,7 +19,8 @@ for p in [dp2_inner, repo_root]:
     if p.exists() and str(p) not in sys.path:
         sys.path.insert(0, str(p))
 
-# 2. Definizione funzione di risoluzione e patch globale
+
+# 2. Definizione GLOBALE delle funzioni di risoluzione e patch
 def _resolve_config_path(config_path):
     cfg_path = Path(config_path)
     if not cfg_path.is_absolute() or not cfg_path.is_file():
@@ -34,25 +35,34 @@ def _resolve_config_path(config_path):
             return matches[0]
     return cfg_path
 
+
+_original_load_config = None
+
+
+def _patched_load_config(config_path, *args, **kwargs):
+    resolved = _resolve_config_path(config_path)
+    if _original_load_config is not None:
+        return _original_load_config(resolved, *args, **kwargs)
+
+    # Fallback se la funzione originale non è catturata
+    from tops.config import LazyConfig
+    return LazyConfig.load(str(resolved))
+
+
+# Tentativo di patch dei moduli già importati o disponibili
 try:
     import dp2.utils
     _original_load_config = dp2.utils.load_config
-
-    def _patched_load_config(config_path, *args, **kwargs):
-        resolved = _resolve_config_path(config_path)
-        return _original_load_config(resolved, *args, **kwargs)
-
-    # Patch del modulo sorgente
     dp2.utils.load_config = _patched_load_config
 
-    # Patch diretta nei moduli che hanno già importato `load_config`
     for mod_name in ["dp2.anonymizer.anonymizer", "dp2.anonymizer", "dp2.infer"]:
         if mod_name in sys.modules:
             setattr(sys.modules[mod_name], "load_config", _patched_load_config)
 except ImportError:
     pass
 
-# 3. Patch di PyTorch Hub per i pesi DSFD (offline mode)
+
+# 3. Patch per PyTorch Hub (modalità offline per pesi DSFD)
 weights_src = Path("/kaggle/input/datasets/domenicovicenti/deep-privacy2-models/WIDERFace_DSFD_RES152.pth")
 
 if weights_src.exists():
@@ -70,7 +80,8 @@ if weights_src.exists():
 
     torch.hub.download_url_to_file = _noop_download
 
-# 4. Mock dipendenze opzionali / esterne
+
+# 4. Mocking dipendenze esterne opzionali o mancanti nel container Kaggle
 try:
     import motpy
 except ModuleNotFoundError:
@@ -116,6 +127,7 @@ except ModuleNotFoundError:
     sys.modules["densepose.structures"] = densepose
 
 
+# 5. Classe Target per la De-identificazione
 class DeepPrivacy2Target(BaseDeidentificationTarget):
     def __init__(self, config_path: str = "face_fdf128", models_dir: str = None):
         self.pipeline = self._load_pipeline(config_path, models_dir)
@@ -141,7 +153,7 @@ class DeepPrivacy2Target(BaseDeidentificationTarget):
         if hasattr(cfg, "detector") and hasattr(cfg.detector, "name"):
             del cfg.detector.name
 
-        # Configurazione percorsi scrivibili assoluti su /tmp
+        # Configurazione directory di output scrivibile
         writable_output_dir = Path("/tmp/outputs").resolve()
         writable_output_dir.mkdir(parents=True, exist_ok=True)
         
@@ -154,9 +166,12 @@ class DeepPrivacy2Target(BaseDeidentificationTarget):
         try:
             os.chdir(str(repo_root))
             
-            # Assicura la patch all'interno di dp2.anonymizer.anonymizer se viene importato durante instantiate
-            import dp2.anonymizer.anonymizer as anon_mod
-            anon_mod.load_config = _patched_load_config
+            # Applicazione protetta della patch nel contesto di istanziazione
+            try:
+                import dp2.anonymizer.anonymizer as anon_mod
+                anon_mod.load_config = _patched_load_config
+            except ImportError:
+                pass
 
             if hasattr(cfg, "anonymizer"):
                 pipeline = instantiate(cfg.anonymizer)
