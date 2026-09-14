@@ -1,7 +1,3 @@
-"""
-Rappresenta il target da sottoporre al test di sicurezza (DeepPrivacy2)
-"""
-
 import sys
 import types
 import shutil
@@ -218,39 +214,45 @@ class DeepPrivacy2Target(BaseDeidentificationTarget):
         """
         Processa un tensore immagine tramite la pipeline di DeepPrivacy2.
         """
-        # Assicura che l'immagine sia in scala 0-255 e convertita esplicitamente in torch.uint8 come richiesto da DP2
         img = image_tensor.detach().clone()
         if img.max() <= 1.0:
             img = img * 255.0
         
-        # Formato atteso da DP2: (B, C, H, W) oppure (C, H, W) in uint8
-        if img.dim() == 3:
-            img_uint8 = img.byte()
-            img_input = img_uint8.unsqueeze(0) # Aggiunge la dimensione del batch
-        else:
-            img_input = img.byte()
+        # Converte in formato uint8 CPU (H, W, C) come numpy array, spesso richiesto dai wrapper di DP2
+        img_np = img.permute(1, 2, 0).byte().cpu().numpy()
 
-        # Invocazione diretta della pipeline DP2 con gestione dei tipi
         anonymized_img = None
-        try:
-            # DP2 __call__ restituisce l'immagine anonimizzata
-            anonymized_img = self.pipeline(img_input)
-        except Exception:
-            # Fallback iterando sui metodi alternativi se presenti
-            img_np = img_input.squeeze(0).permute(1, 2, 0).cpu().numpy()
-            for method_name in ["anonymize_image", "anonymize", "process"]:
-                if hasattr(self.pipeline, method_name):
-                    try:
-                        func = getattr(self.pipeline, method_name)
-                        anonymized_img = func(img_np)
-                        break
-                    except Exception:
-                        continue
+        
+        # 1. Tentativo tramite i metodi standard di elaborazione immagine della pipeline
+        for method_name in ["anonymize_image", "anonymize", "process"]:
+            if hasattr(self.pipeline, method_name):
+                try:
+                    func = getattr(self.pipeline, method_name)
+                    anonymized_img = func(img_np)
+                    break
+                except Exception:
+                    continue
+
+        # 2. Se i metodi falliscono, proviamo a passare l'input come lista o dizionario a __call__
+        if anonymized_img is None and hasattr(self.pipeline, "__call__"):
+            try:
+                # Alcune pipeline DP2 accettano liste di numpy arrays o tensori batch
+                inputs = [img_np]
+                res = self.pipeline(inputs)
+                anonymized_img = res[0] if isinstance(res, (list, tuple)) else res
+            except Exception:
+                try:
+                    # Fallback con tensore batch torch.uint8
+                    batch_tensor = img.byte().unsqueeze(0)
+                    res = self.pipeline(batch_tensor)
+                    anonymized_img = res[0] if isinstance(res, torch.Tensor) and res.dim() == 4 else res
+                except Exception as e:
+                    raise RuntimeError(f"Tutti i tentativi di chiamata alla pipeline DeepPrivacy2 sono falliti: {e}")
 
         if anonymized_img is None:
             raise RuntimeError("Impossibile completare l'anonimizzazione tramite la pipeline DeepPrivacy2.")
 
-        # Converte l'output risultante in un tensore PyTorch float normalizzato tra [0, 1] con formato (C, H, W)
+        # Conversione finale del risultato in tensore float normalizzato [0, 1] con formato (C, H, W)
         if isinstance(anonymized_img, torch.Tensor):
             out_tensor = anonymized_img.detach().cpu()
             if out_tensor.dim() == 4:
