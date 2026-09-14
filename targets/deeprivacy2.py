@@ -35,9 +35,9 @@ class DeepPrivacy2Target(BaseDeidentificationTarget):
     
         from dp2.infer import build_trained_generator
 
-    # Carica la configurazione ed istanzia il generatore
-    cfg = load_config("fdf128", models_dir=models_dir)
-    return build_trained_generator(cfg)
+        # Carica la configurazione ed istanzia il generatore
+        cfg = load_config("fdf128", models_dir=models_dir)
+        return build_trained_generator(cfg)
 
     def process_image(self, image_tensor: torch.Tensor) -> np.ndarray:
         """
