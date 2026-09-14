@@ -5,6 +5,7 @@ Rappresenta il target da sottoporre al test di sicurezza
 
 import sys
 import types
+import shutil
 from pathlib import Path
 import torch
 import numpy as np
