@@ -5,12 +5,12 @@ Rappresenta il target da sottoporre al test di sicurezza
 
 import sys
 import types
-from pathlib import Path  # <-- Mancava questo import
+from pathlib import Path
 import torch
 import numpy as np
 from targets.base_target import BaseDeidentificationTarget
 
-# Mock di motpy se non presente
+# 1. Mock di motpy se non presente
 try:
     import motpy
 except ModuleNotFoundError:
@@ -19,10 +19,14 @@ except ModuleNotFoundError:
     motpy.MultiObjectTracker = object
     sys.modules["motpy"] = motpy
 
-# Disabilita completamente l'import del detector CSE (DensePose)
-fake_cse_module = types.ModuleType("dp2.detection.cse_mask_face_detector")
-fake_cse_module.CSeMaskFaceDetector = None
-sys.modules["dp2.detection.cse_mask_face_detector"] = fake_cse_module
+# 2. Mock dei moduli CSE interni di DeepPrivacy2 per evitare la dipendenza da densepose
+fake_cse_detector = types.ModuleType("dp2.detection.cse_mask_face_detector")
+fake_cse_detector.CSeMaskFaceDetector = None
+sys.modules["dp2.detection.cse_mask_face_detector"] = fake_cse_detector
+
+fake_dp2_utils_cse = types.ModuleType("dp2.utils.cse")
+fake_dp2_utils_cse.from_E_to_vertex = lambda *args, **kwargs: None
+sys.modules["dp2.utils.cse"] = fake_dp2_utils_cse
 
 
 class DeepPrivacy2Target(BaseDeidentificationTarget):
@@ -57,6 +61,7 @@ class DeepPrivacy2Target(BaseDeidentificationTarget):
                 raise FileNotFoundError(f"Impossibile trovare la configurazione {cfg_path.name} in {repo_root}")
 
         cfg = LazyConfig.load(str(cfg_path))
+
         cfg.detector.name = "dsfd"
 
         if models_dir:
