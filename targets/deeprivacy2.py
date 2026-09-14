@@ -120,14 +120,24 @@ class DeepPrivacy2Target(BaseDeidentificationTarget):
         if hasattr(cfg, "detector") and hasattr(cfg.detector, "name"):
             del cfg.detector.name
 
-        # Istanziazione corretta del modulo anonymizer
-        if hasattr(cfg, "anonymizer"):
-            return instantiate(cfg.anonymizer)
-        elif hasattr(cfg, "generator"):
-            from dp2.infer import build_trained_generator
-            return build_trained_generator(cfg)
-        else:
-            return instantiate(cfg)
+        # Mantieni il percorso corrente originale
+        orig_cwd = os.getcwd()
+        try:
+            # Spostati nella radice di deep_privacy2 per permettere il caricamento dei percorsi relativi
+            os.chdir(str(repo_root))
+            
+            if hasattr(cfg, "anonymizer"):
+                pipeline = instantiate(cfg.anonymizer)
+            elif hasattr(cfg, "generator"):
+                from dp2.infer import build_trained_generator
+                pipeline = build_trained_generator(cfg)
+            else:
+                pipeline = instantiate(cfg)
+        finally:
+            # Ripristina sempre la directory di lavoro originale
+            os.chdir(orig_cwd)
+
+        return pipeline
 
     def process_image(self, image: torch.Tensor, *args, **kwargs) -> np.ndarray:
         if isinstance(image, torch.Tensor):
