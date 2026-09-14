@@ -36,7 +36,7 @@ def _load_pipeline(self, config_path, models_dir):
     return build_trained_generator(cfg)
 
 # La firma deve combaciare con la classe base: 'image' anziché 'image_tensor'
-def process_image(self, image: torch.Tensor) -> np.ndarray:
+def process_image(self, image: torch.Tensor, *args, **kwargs) -> np.ndarray:
     """
     Riceve tensore PyTorch e applica DeepPrivacy2.
     Se il detector è ingannato, restituisce l'immagine originale inalterata.
