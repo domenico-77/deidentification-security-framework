@@ -24,10 +24,18 @@ def main():
     with open(args.config, 'r') as f:
         config = yaml.safe_load(f)
 
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+
     # Inizializzazione Modelli
     target = DeepPrivacy2Target(models_dir=config['target']['models_dir'])
     detector = DSFDDetector(target.pipeline)
-    # Estrazione dei componenti necessari per PGDAttack
+
+    # Estrazione corretta dei componenti dal target/pipeline di DeepPrivacy2
+    # (Adattato alla struttura della classe DeepPrivacy2Target)
+    anonymizer = target.pipeline  # oppure target.anonymizer a seconda di come è strutturato il target
+    if hasattr(target, "anonymizer"):
+        anonymizer = target.anonymizer
+
     detector_wrapper = anonymizer.detector
     dsfd_net = detector_wrapper.face_detector.net.to(device).eval()
     mean_tensor = detector_wrapper.face_mean.to(device).float().flatten().view(1, 3, 1, 1)
