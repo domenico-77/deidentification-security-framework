@@ -24,21 +24,32 @@ try:
     import densepose
 except ModuleNotFoundError:
     densepose = types.ModuleType("densepose")
+    
+    # Mock modeling/cse
     modeling = types.ModuleType("densepose.modeling")
     cse = types.ModuleType("densepose.modeling.cse")
     cse_utils = types.ModuleType("densepose.modeling.cse.utils")
-    
-    # Mock della funzione usata in dp2/utils/cse.py
     cse_utils.get_closest_vertices_mask_from_ES = lambda *args, **kwargs: None
     
     cse.utils = cse_utils
     modeling.cse = cse
     densepose.modeling = modeling
     
+    # Mock data/utils (richiesto da dp2.detection.models.cse)
+    data = types.ModuleType("densepose.data")
+    data_utils = types.ModuleType("densepose.data.utils")
+    data_utils.get_class_to_mesh_name_mapping = lambda *args, **kwargs: {}
+    
+    data.utils = data_utils
+    densepose.data = data
+    
+    # Registrazione dei moduli in sys.modules
     sys.modules["densepose"] = densepose
     sys.modules["densepose.modeling"] = modeling
     sys.modules["densepose.modeling.cse"] = cse
     sys.modules["densepose.modeling.cse.utils"] = cse_utils
+    sys.modules["densepose.data"] = data
+    sys.modules["densepose.data.utils"] = data_utils
 
 
 class DeepPrivacy2Target(BaseDeidentificationTarget):
