@@ -86,6 +86,7 @@ class DeepPrivacy2Target(BaseDeidentificationTarget):
         self.pipeline = self._load_pipeline(config_path, models_dir)
 
     def _load_pipeline(self, config_path, models_dir):
+        import os
         repo_root = Path("/kaggle/input/datasets/domenicovicenti/deep-privacy2-repository")
         dp2_inner = repo_root / "deep_privacy2"
         
@@ -116,16 +117,20 @@ class DeepPrivacy2Target(BaseDeidentificationTarget):
         if models_dir:
             cfg.models_dir = models_dir
 
-        # Rimozione di eventuali parametri 'name' iniettati che rompono BaseDetector.__init__
         if hasattr(cfg, "detector") and hasattr(cfg.detector, "name"):
             del cfg.detector.name
 
-        # Mantieni il percorso corrente originale
+        # Reindirizzamento dell'output directory e della cache del detector su /tmp/outputs
+        writable_output_dir = Path("/tmp/outputs")
+        writable_output_dir.mkdir(parents=True, exist_ok=True)
+        cfg.output_dir = str(writable_output_dir)
+
+        if hasattr(cfg, "detector") and hasattr(cfg.detector, "cache_directory"):
+            cfg.detector.cache_directory = str(writable_output_dir / "face_detection_cache")
+
         orig_cwd = os.getcwd()
         try:
-            # Spostati nella radice di deep_privacy2 per permettere il caricamento dei percorsi relativi
             os.chdir(str(repo_root))
-            
             if hasattr(cfg, "anonymizer"):
                 pipeline = instantiate(cfg.anonymizer)
             elif hasattr(cfg, "generator"):
@@ -134,7 +139,6 @@ class DeepPrivacy2Target(BaseDeidentificationTarget):
             else:
                 pipeline = instantiate(cfg)
         finally:
-            # Ripristina sempre la directory di lavoro originale
             os.chdir(orig_cwd)
 
         return pipeline
