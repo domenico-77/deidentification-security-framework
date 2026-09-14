@@ -8,7 +8,7 @@ class DSFDDetector(BaseDetector):
     def __init__(self, deeprivacy_wrapper, device=None):
         self.wrapper = deeprivacy_wrapper
         self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.model = self._extract_detector_model(self.wrapper)
+        self.model = self._extract_pure_nn_module(self.wrapper)
         
         if hasattr(self.model, "to"):
             self.model.to(self.device)
@@ -16,8 +16,9 @@ class DSFDDetector(BaseDetector):
 
         self.mean = torch.tensor([104.0, 117.0, 123.0], device=self.device).view(1, 3, 1, 1)
 
-    def _extract_detector_model(self, wrapper):
-        """Estrae la sottorete PyTorch interna (es. .net o .model) evitando i wrapper di alto livello."""
+    def _extract_pure_nn_module(self, wrapper):
+        """Estrae in modo sicuro la vera nn.Module di PyTorch bypassando i wrapper di DeepPrivacy2."""
+        # 1. Cerca il detector specifico nel dizionario di DeepPrivacy2
         detector_obj = None
         if hasattr(wrapper, "detectors") and FaceDetection in wrapper.detectors:
             detector_obj = wrapper.detectors[FaceDetection]
@@ -28,24 +29,29 @@ class DSFDDetector(BaseDetector):
         else:
             detector_obj = wrapper
 
-        # Risali ricorsivamente o tramite attributi alla vera rete PyTorch nn.Module
-        current = detector_obj
-        for attr in ["net", "model", "detector", "face_detector"]:
-            if hasattr(current, attr):
-                candidate = getattr(current, attr)
-                if isinstance(candidate, nn.Module):
-                    return candidate
-                current = candidate
+        # 2. Se l'oggetto ha un attributo .net (tipico dei detector in DP2/face-detection), prendilo
+        if hasattr(detector_obj, "net") and isinstance(detector_obj.net, nn.Module):
+            return detector_obj.net
 
-        return current if isinstance(current, nn.Module) else detector_obj
+        # 3. Se ha un attributo .model ed è un nn.Module
+        if hasattr(detector_obj, "model") and isinstance(detector_obj.model, nn.Module):
+            return detector_obj.model
+
+        # 4. Navigazione ricorsiva standard se è già un nn.Module
+        if isinstance(detector_obj, nn.Module):
+            return detector_obj
+
+        # Se fallisce tutto, restituisce l'oggetto così com'è
+        return detector_obj
 
     def count_detections(self, image_tensor: torch.Tensor) -> int:
-        img = image_tensor.to(self.device)
-        if img.dim() == 3:
-            img = img.unsqueeze(0)
+        # Usa il metodo di alto livello nativo del wrapper se disponibile per un conteggio sicuro delle box
+        detector_obj = None
+        if hasattr(self.wrapper, "detectors") and FaceDetection in self.wrapper.detectors:
+            detector_obj = self.wrapper.detectors[FaceDetection]
+        elif hasattr(self.wrapper, "face_detector"):
+            detector_obj = self.wrapper.face_detector
 
-        # Se il wrapper originale ha un metodo di detection di alto livello, usalo per il conteggio pulito
-        detector_obj = self.wrapper.detectors.get(FaceDetection) if hasattr(self.wrapper, "detectors") else getattr(self.wrapper, "face_detector", None)
         if detector_obj is not None and hasattr(detector_obj, "detect_faces"):
             try:
                 boxes, scores = detector_obj.detect_faces(image_tensor)
@@ -53,10 +59,14 @@ class DSFDDetector(BaseDetector):
             except Exception:
                 pass
 
-        # Fallback tramite forward pass sulla rete estratta
+        # Fallback manuale tramite forward sulla rete pura
+        img = image_tensor.to(self.device)
+        if img.dim() == 3:
+            img = img.unsqueeze(0)
+
         img_bgr = img[:, [2, 1, 0], :, :]
         if img_bgr.max() <= 1.0:
-            img_bgr = img_bgr * 255.0  # Riporta in scala 0-255 se normalizzato tra 0 e 1
+            img_bgr = img_bgr * 255.0
             
         img_norm = img_bgr - self.mean.to(self.device)
 
