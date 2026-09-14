@@ -3,10 +3,11 @@ import time
 import torch
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
 from tqdm import tqdm
 
 from metrics.perturbation import calculate_perturbation_metrics
-from utils.logger import print_run_header, print_attack_results  # <-- Importiamo il logger
+from utils.logger import print_run_header, print_attack_results
 
 class BenchmarkRunner:
     def __init__(self, target, attack, dataset, device="cuda"):
@@ -42,13 +43,10 @@ class BenchmarkRunner:
             print(f"\nInizio test con epsilon = {eps}...")
             
             for idx in tqdm(range(max_samples)):
-                start_time = time.time()  # Per tracciare il tempo del singolo campione
+                start_time = time.time()
                 
                 batch = self.dataset[idx]
-                # Gestisce sia tensori singoli che tuple restituite dal dataset loader
                 img_orig_tensor = batch[0].float().to(self.device) if isinstance(batch, (list, tuple)) else batch.float().to(self.device)
-                
-                # Nome immagine (fallback se il dataset non passa una stringa identificativa)
                 image_name = f"sample_{idx}.jpg"
                 
                 clean_faces = self.count_faces(img_orig_tensor)
@@ -64,20 +62,17 @@ class BenchmarkRunner:
                 adv_faces = self.count_faces(img_adv)
                 evaded = (adv_faces == 0)
 
-                # Calcolo metriche di perturbazione corrette in scala [0, 255]
+                # Calcolo metriche di perturbazione
                 metrics = calculate_perturbation_metrics(img_orig_tensor, img_adv)
-                
                 elapsed_seconds = time.time() - start_time
                 current_run_count += 1
 
-                # -------------------------------------------------------------
-                # CHIAMATA AL LOGGER PER DETTAGLI SU TERMINALE
-                # -------------------------------------------------------------
+                # Stampa dei log dettagliati in tempo reale
                 print_run_header(idx + 1, max_samples, image_name, eps)
                 print_attack_results(
                     detector_evasion=evaded,
-                    pipeline_bypass=True,  # O la tua logica di bypass specifica se presente
-                    attack_success=evaded, # True se evade il detector
+                    pipeline_bypass=True,
+                    attack_success=evaded,
                     success_iteration=succ_iter,
                     metrics=metrics,
                     pipeline_mse=metrics["mse"],
@@ -103,3 +98,35 @@ class BenchmarkRunner:
         df.to_csv(csv_path, index=False)
         print(f"\nBenchmark completato con successo. Risultati salvati in {csv_path}")
         return df
+
+    def visualize_best_attack(self, csv_path, save_path=None):
+        """Metodo interno per la gestione dei risultati e dei plot finali."""
+        if not os.path.exists(csv_path):
+            print(f"[WARNING] File CSV non trovato: {csv_path}")
+            return
+            
+        df = pd.read_csv(csv_path)
+        successful = df[df["evaded"] == True] if "evaded" in df.columns else df.iloc[:0]
+        
+        if successful.empty:
+            print("[WARNING] Nessun attacco riuscito trovato nel CSV per la visualizzazione.")
+            return
+        
+        best_run = successful.sort_values(by="epsilon").iloc[0]
+        print(f"\nGenerazione visualizzazione per la migliore run: Epsilon={best_run['epsilon']}")
+        
+        fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+        axes[0].set_title(f"Target (Eps: {best_run['epsilon']})")
+        axes[0].axis("off")
+        axes[1].set_title("DeepPrivacy2 (Baseline)")
+        axes[1].axis("off")
+        axes[2].set_title("DeepPrivacy2 (Adversarial)")
+        axes[2].axis("off")
+        
+        plt.tight_layout()
+        if save_path:
+            os.makedirs(os.path.dirname(save_path), exist_ok=True)
+            plt.savefig(save_path, dpi=200, bbox_inches="tight")
+            print(f"Grafico salvato in: {save_path}")
+        plt.show()
+        plt.close()
