@@ -36,16 +36,18 @@ _original_load_config = None
 
 
 def _patched_load_config(config_path, *args, **kwargs):
+    # Intercetta e forza il file corretto se viene richiesto quello vecchio
+    if config_path and ("stylegan_fdf128" in str(config_path) or "fdf128" in str(config_path)):
+        config_path = "configs/fdf/stylegan.py"
+        
     resolved = _resolve_config_path(config_path)
     if _original_load_config is not None:
         return _original_load_config(resolved, *args, **kwargs)
 
-    # Fallback se la funzione originale non è catturata
     from tops.config import LazyConfig
     return LazyConfig.load(str(resolved))
 
 
-# Tentativo di patch dei moduli già importati o disponibili
 try:
     import dp2.utils
     _original_load_config = dp2.utils.load_config
@@ -126,7 +128,6 @@ def _patched_load_generator_state(ckpt, generator, ckpt_mapper=None):
     if isinstance(ckpt, (str, Path)):
         ckpt = torch.load(ckpt, map_location="cpu")
     
-    # Gestione flessibile delle varie chiavi usate nei checkpoint di DeepPrivacy2
     if "generator" in ckpt:
         state = ckpt["generator"]
     elif "EMA_generator" in ckpt:
@@ -138,7 +139,7 @@ def _patched_load_generator_state(ckpt, generator, ckpt_mapper=None):
     elif "state_dict" in ckpt:
         state = ckpt["state_dict"]
     else:
-        state = ckpt  # Fallback se il file contiene direttamente lo state_dict
+        state = ckpt  
 
     if ckpt_mapper is not None:
         state = ckpt_mapper(state)
@@ -146,22 +147,25 @@ def _patched_load_generator_state(ckpt, generator, ckpt_mapper=None):
     generator.load_state_dict(state, strict=False)
 
 
-# Applicazione della patch al modulo infer di DP2
 try:
     import dp2.infer
     dp2.infer.load_generator_state = _patched_load_generator_state
 except ImportError:
     pass
+
+
 # 5. Classe Target per la De-identificazione
 class DeepPrivacy2Target(BaseDeidentificationTarget):
-    def __init__(self, config_path: str = "face_fdf128", models_dir: str = None):
+    # MODIFICA CHIAVE: Impostato di default il path corretto di stylegan.py
+    def __init__(self, config_path: str = "configs/fdf/stylegan.py", models_dir: str = None):
         self.pipeline = self._load_pipeline(config_path, models_dir)
 
     def _load_pipeline(self, config_path, models_dir):
         from tops.config import LazyConfig, instantiate
 
-        if config_path is None or config_path in ["fdf128", "stylegan_fdf128"]:
-            config_path = "face_fdf128"
+        # Se viene passato un alias vecchio, lo mappiamo direttamente a stylegan.py
+        if config_path is None or config_path in ["fdf128", "stylegan_fdf128", "face_fdf128"]:
+            config_path = "configs/fdf/stylegan.py"
 
         cfg_path = _resolve_config_path(config_path)
         if not cfg_path.suffix:
@@ -178,7 +182,6 @@ class DeepPrivacy2Target(BaseDeidentificationTarget):
         if hasattr(cfg, "detector") and hasattr(cfg.detector, "name"):
             del cfg.detector.name
 
-        # Configurazione directory di output scrivibile
         writable_output_dir = Path("/tmp/outputs").resolve()
         writable_output_dir.mkdir(parents=True, exist_ok=True)
         
@@ -191,7 +194,6 @@ class DeepPrivacy2Target(BaseDeidentificationTarget):
         try:
             os.chdir(str(repo_root))
             
-            # Applicazione protetta della patch nel contesto di istanziazione
             try:
                 import dp2.anonymizer.anonymizer as anon_mod
                 anon_mod.load_config = _patched_load_config
@@ -211,16 +213,11 @@ class DeepPrivacy2Target(BaseDeidentificationTarget):
         return pipeline
 
     def process_image(self, image_tensor):
-        """
-        Processa un tensore immagine tramite la pipeline di DeepPrivacy2,
-        gestendo direttamente il flusso per evitare errori di unpacking interni.
-        """
         device = image_tensor.device
         img = image_tensor.detach().clone()
         if img.max() <= 1.0:
             img = img * 255.0
         
-        # Formato uint8 (C, H, W) o (1, C, H, W)
         if img.dim() == 3:
             img_uint8 = img.byte()
             img_batch = img_uint8.unsqueeze(0)
@@ -230,7 +227,6 @@ class DeepPrivacy2Target(BaseDeidentificationTarget):
 
         anonymized_img = None
 
-        # Tentativo 1: Esecuzione tramite i metodi nativi se disponibili nell'oggetto pipeline
         for method_name in ["anonymize_image", "anonymize", "process"]:
             if hasattr(self.pipeline, method_name):
                 try:
@@ -243,10 +239,8 @@ class DeepPrivacy2Target(BaseDeidentificationTarget):
                 except Exception:
                     continue
 
-        # Tentativo 2: Se i metodi nativi falliscono, usiamo il generatore e il detector interni di DP2
         if anonymized_img is None:
             try:
-                # Cerca di estrarre le facce e applicare il generatore StyleGAN di DP2
                 detector_obj = None
                 if hasattr(self.pipeline, "detectors"):
                     from dp2.anonymizer.anonymizer import FaceDetection
@@ -254,24 +248,18 @@ class DeepPrivacy2Target(BaseDeidentificationTarget):
                 elif hasattr(self.pipeline, "face_detector"):
                     detector_obj = self.pipeline.face_detector
 
-                # Se abbiamo un detector valido, otteniamo le box e passiamo l'immagine al generatore
                 if detector_obj is not None and hasattr(self.pipeline, "generator"):
-                    # Esegue il rilevamento nativo
                     boxes, _ = detector_obj.detect_faces(img_batch)
                     if boxes is not None and len(boxes) > 0:
-                        # Generazione dell'immagine anonimizzata tramite il generatore interno
                         gen_output = self.pipeline.generator(img_batch.float().to(device), boxes)
                         anonymized_img = gen_output[0] if isinstance(gen_output, (list, tuple)) else gen_output
                     else:
                         anonymized_img = img_batch
                 else:
-                    # Fallback estremo: restituisce l'immagine originale se non è possibile anonimizzarla in sicurezza
                     anonymized_img = img_batch
-            except Exception as e:
-                # Ultimo fallback sicuro per non bloccare il benchmark PGD
+            except Exception:
                 anonymized_img = img_batch
 
-        # Conversione finale del risultato in tensore float normalizzato [0, 1] con formato (C, H, W)
         if isinstance(anonymized_img, torch.Tensor):
             out_tensor = anonymized_img.detach().cpu()
             if out_tensor.dim() == 4:
