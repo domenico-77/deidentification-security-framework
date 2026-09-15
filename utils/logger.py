@@ -10,9 +10,7 @@ def print_run_header(image_idx, total_images, image_name, epsilon):
     print(f"IMAGE {image_idx}/{total_images} | {image_name} | epsilon={epsilon}")
     print("#" * 70)
 
-def print_attack_results(
-    detector_evasion, 
-    pipeline_bypass, 
+def print_attack_results( 
     attack_success, 
     success_iteration, 
     metrics, 
