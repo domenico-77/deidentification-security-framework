@@ -211,18 +211,29 @@ class BenchmarkRunner:
         adv_pipeline_np = tensor_to_numpy(pipeline_out_adv)
 
         # 4. Estrazione delle coordinate del volto
+        # 4. Estrazione delle coordinate del volto (Gestione robusta del detector)
         box = None
-        if len(detections) > 0 and detections[0] is not None:
-            try:
-                faces_list = list(detections[0])
-                if len(faces_list) > 0:
-                    face_item = faces_list[0]
+        try:
+            # DeepPrivacy2 / DSFD detector può restituire un tensore, una lista o un oggetto strutturato
+            if detections is not None:
+                det_results = detections[0] if isinstance(detections, (list, tuple)) else detections
+                
+                # Se è un tensore o un array numpy
+                if isinstance(det_results, torch.Tensor):
+                    det_results = det_results.detach().cpu().numpy()
+                elif hasattr(det_results, "cpu"):
+                    det_results = det_results.cpu().numpy()
+                    
+                if isinstance(det_results, np.ndarray) and det_results.size > 0:
+                    box = det_results[0][:4].astype(int)
+                elif isinstance(det_results, (list, tuple)) and len(det_results) > 0:
+                    face_item = det_results[0]
                     if hasattr(face_item, "cpu"):
                         box = face_item[:4].cpu().numpy().astype(int)
-                    elif isinstance(face_item, (list, tuple, np.ndarray)):
+                    elif isinstance(face_item, (np.ndarray, list, tuple)):
                         box = np.array(face_item[:4]).astype(int)
-            except Exception as e:
-                print(f"[DEBUG] Errore estrazione box: {e}")
+        except Exception as e:
+            print(f"[DEBUG] Errore estrazione box corretto: {e}")
 
         if box is not None:
             x1, y1, x2, y2 = box
@@ -236,6 +247,8 @@ class BenchmarkRunner:
             face_orig_pipe = orig_pipeline_np[y1:y2, x1:x2]
             face_adv_pipe = adv_pipeline_np[y1:y2, x1:x2]
         else:
+            # Fallimento nel trovare il box: usiamo un ritaglio centrale di sicurezza o l'immagine intera
+            print("[WARNING] Impossibile estrarre il bounding box del volto, uso l'immagine intera per il plot.")
             face_orig, face_orig_pipe, face_adv_pipe = orig_np, orig_pipeline_np, adv_pipeline_np
 
         # 5. Generazione del plot a 3 pannelli
