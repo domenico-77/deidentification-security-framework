@@ -132,7 +132,17 @@ from targets.base_target import BaseDeidentificationTarget
 class DeepPrivacy2Target(BaseDeidentificationTarget):
     def __init__(self, config_path: str = None, models_dir: str = None):
         self.pipeline = self._load_pipeline()
-
+        
+        self.face_G = None
+        if hasattr(self.pipeline, "generators"):
+            # Cerca nel dizionario dei generatori della pipeline di DeepPrivacy2
+            for k, gen in self.pipeline.generators.items():
+                if "face" in str(k).lower() or "generator" in str(type(gen)).lower():
+                    self.face_G = gen
+                    break
+            if self.face_G is None and len(self.pipeline.generators) > 0:
+                self.face_G = list(self.pipeline.generators.values())[0]
+                
     def _load_pipeline(self):
         from tops.config import LazyConfig, instantiate
 
