@@ -106,14 +106,7 @@ class BenchmarkRunner:
         return df
 
     def visualize_best_attack(self, csv_path, save_path=None):
-        # Controllo di debug per verificare lo stato del generatore StyleGAN
-        anonymizer_obj = getattr(self.target, "anonymizer", getattr(self.target, "pipeline", self.target))
-        
-        if hasattr(anonymizer_obj, "face_G") and anonymizer_obj.face_G is not None:
-            print("[DEBUG] ✅ Generator (face_G) caricato correttamente.")
-        else:
-            print("[WARNING] ❌ ATTENZIONE: Il generator StyleGAN (face_G) NON è caricato o è vuoto!")
-        """Seleziona l'attacco riuscito, individua il volto e genera il plot con i ritagli comparativi."""
+        """Seleziona l'attacco riuscito, individua il volto e genera il plot con le immagini comparative."""
         if not os.path.exists(csv_path):
             print(f"[WARNING] File CSV non trovato: {csv_path}")
             return
