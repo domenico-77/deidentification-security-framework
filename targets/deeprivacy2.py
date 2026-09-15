@@ -24,7 +24,6 @@ sys.modules["clip"] = DummyModule("clip")
 sys.modules["dp2.detection.cse_mask_face_detector"] = DummyModule("cse_mask")
 sys.modules["dp2.detection.person_detector"] = DummyModule("person_detector")
 
-# Funzione mock per cse.py
 fake_cse = types.ModuleType("dp2.utils.cse")
 fake_cse.from_E_to_vertex = lambda *args, **kwargs: None
 sys.modules["dp2.utils.cse"] = fake_cse
@@ -84,7 +83,6 @@ class DeepPrivacy2Target(BaseDeidentificationTarget):
     def _load_pipeline(self):
         from tops.config import LazyConfig, instantiate
 
-        # Percorsi specifici e sicuri per le configurazioni degli anonymizers
         possible_paths = [
             repo_root / "configs" / "anonymizers" / "face.py",
             repo_root / "configs" / "anonymizers" / "face_fdf128.py",
@@ -98,7 +96,6 @@ class DeepPrivacy2Target(BaseDeidentificationTarget):
                 face_cfg_path = p
                 break
 
-        # Fallback controllato evitando le cartelle di demo
         if not face_cfg_path:
             for p in repo_root.glob("**/face.py"):
                 if "gradio_demos" not in str(p) and "demos" not in str(p):
@@ -112,7 +109,8 @@ class DeepPrivacy2Target(BaseDeidentificationTarget):
 
         orig_cwd = os.getcwd()
         try:
-            os.chdir(str(repo_root))
+            # Spostiamoci su /tmp (cartella scrivibile) invece del repo read-only
+            os.chdir("/tmp")
             sys.path_importer_cache.clear()
 
             cfg = LazyConfig.load(str(face_cfg_path))
