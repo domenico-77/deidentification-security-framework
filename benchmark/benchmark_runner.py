@@ -142,7 +142,7 @@ class BenchmarkRunner:
         if not found:
             idx = 0
             
-        print(f"\nGenerazione visualizzazione ritagli di volto per: {image_name} | Epsilon={eps} (Indice dataset: {idx})")
+        print(f"\nGenerazione e visualizzazione volto per: {image_name} | Epsilon={eps}")
         
         # 1. Recupera l'immagine originale dal dataset
         batch = self.dataset[idx]
@@ -258,5 +258,4 @@ class BenchmarkRunner:
             plt.savefig(save_path, dpi=200, bbox_inches="tight")
             print(f"Grafico dei volti salvato in: {save_path}")
             
-        plt.show()
         plt.close()
