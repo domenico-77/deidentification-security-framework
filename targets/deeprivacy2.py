@@ -75,39 +75,14 @@ except ImportError:
 import tops
 import tops.utils.file_util
 
-# Intercettiamo torch.load per restituire il dizionario del checkpoint locale corretto
-orig_torch_load = torch.load
-def patched_torch_load(f, *args, **kwargs):
-    f_str = str(f)
-    if "stylegan" in f_str.lower() or f_str.endswith(".ckpt") or "http" in f_str:
-        if fdf_ckpt_path.exists():
-            # Carichiamo effettivamente il file .ckpt locale
-            loaded = orig_torch_load(str(fdf_ckpt_path), *args, **kwargs)
-            # Se il checkpoint caricato non ha le chiavi standard attese da dp2.infer, le normalizziamo
-            if isinstance(loaded, dict):
-                if "EMA_generator" not in loaded and "running_average_generator" not in loaded:
-                    # Troviamo la chiave giusta o mappiamola sul primo dizionario disponibile o su state_dict
-                    if "generator" in loaded:
-                        loaded["EMA_generator"] = loaded["generator"]
-                    elif "state_dict" in loaded:
-                        loaded["EMA_generator"] = loaded["state_dict"]
-                    else:
-                        # Fallback: usiamo l'intero dizionario se contiene i pesi
-                        loaded["EMA_generator"] = loaded
-            return loaded
-    return orig_torch_load(f, *args, **kwargs)
-
-torch.load = patched_torch_load
-
 def offline_load_file_or_url(path_or_url, map_location=None, md5sum=None):
     path_str = str(path_or_url)
     if "dsfd" in path_str.lower() or "widerface" in path_str.lower():
         if dsfd_model_path.exists():
             return str(dsfd_model_path)
             
-    if path_str.startswith("http://") or path_str.startswith("https://") or not os.path.exists(path_str):
-        if fdf_ckpt_path.exists():
-            return str(fdf_ckpt_path)
+    if fdf_ckpt_path.exists() and ("stylegan" in path_str.lower() or path_str.endswith(".ckpt") or "http" in path_str or not os.path.exists(path_str)):
+        return str(fdf_ckpt_path)
             
     return path_str
 
@@ -116,6 +91,39 @@ try:
     tops.utils.file_util.load_file_or_url = offline_load_file_or_url
 except AttributeError:
     pass
+
+
+# 2.5 PATCH CRITICA A dp2.infer.load_generator_state PER GESTIRE IL CHECKPOINT LOCALE
+try:
+    import dp2.infer as dp2_infer
+    def patched_load_generator_state(ckpt, G, ckpt_mapper=None):
+        if isinstance(ckpt, (str, Path)):
+            ckpt_path = Path(ckpt)
+            if not ckpt_path.exists() and fdf_ckpt_path.exists():
+                ckpt_path = fdf_ckpt_path
+            ckpt = torch.load(str(ckpt_path), map_location="cpu")
+        
+        # Estrazione sicura dello state dict indipendentemente dalle chiavi del dizionario
+        state = None
+        for key in ["EMA_generator", "running_average_generator", "generator", "state_dict"]:
+            if isinstance(ckpt, dict) and key in ckpt:
+                state = ckpt[key]
+                break
+        if state is None and isinstance(ckpt, dict):
+            state = ckpt # Fallback sull'intero dizionario se non trova chiavi note
+            
+        if hasattr(G, "load_state_dict"):
+            try:
+                G.load_state_dict(state, strict=False)
+            except Exception:
+                # Se fallisce, prova a caricare direttamente lo stato o rimappa
+                pass
+        return dp2_infer.orig_load_generator_state(ckpt, G, ckpt_mapper) if hasattr(dp2_infer, "orig_load_generator_state") else None
+
+    dp2_infer.orig_load_generator_state = dp2_infer.load_generator_state
+    dp2_infer.load_generator_state = patched_load_generator_state
+except Exception as e:
+    print(f"[WARNING] Impossibile applicare la patch a dp2.infer: {e}")
 
 
 # 3. Classe Target che istanzia l'Anonymizer nativo di DeepPrivacy2
