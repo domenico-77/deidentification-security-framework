@@ -20,8 +20,6 @@ def print_attack_results(
     total_expected
 ):
     """Stampa a terminale i risultati dettagliati del singolo attacco PGD e delle metriche."""
-    print(f"Detector evasion:  {detector_evasion}")
-    print(f"Pipeline bypass:   {pipeline_bypass}")
     print(f"ATTACK SUCCESS:    {attack_success}")
     print(f"Success iteration: {success_iteration}")
     print(f"L-inf:             {metrics['linf']:.2f}")
