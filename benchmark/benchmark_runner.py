@@ -153,28 +153,37 @@ class BenchmarkRunner:
         
         # 3. Chiamata corretta alla pipeline di anonimizzazione di DeepPrivacy2 (formato 3D: C, H, W)
         # 3. Chiamata alla pipeline di anonimizzazione speculare al tuo vecchio script
+        # 3. Chiamata alla pipeline identica al vecchio script funzionante
         with torch.no_grad():
-            # Convertiamo i tensori nel formato pulito (C, H, W) come facevi nel blocco di test
-            tensor_orig_clean = img_orig_tensor.detach().cpu().byte() if img_orig_tensor.is_cuda else img_orig_tensor.detach().byte()
-            tensor_adv_clean = img_adv.detach().cpu().byte() if img_adv.is_cuda else img_adv.detach().byte()
+            # Assicuriamoci che i tensori abbiano il formato e il tipo attesi dalla pipeline (senza forzare .byte() grezzo se sballa i colori)
+            def prepare_for_anonymizer(t):
+                if t.is_cuda:
+                    t = t.detach().cpu()
+                # Se il tensore è in float [0, 255] o [0, 1], convertiamolo correttamente come nel vecchio test
+                t = t.float()
+                if t.max() <= 1.0:
+                    t = t * 255.0
+                return t.byte().to(self.device)
+
+            tensor_orig_clean = prepare_for_anonymizer(img_orig_tensor)
+            tensor_adv_clean = prepare_for_anonymizer(img_adv)
             
             anonymizer_obj = getattr(self.target, "anonymizer", getattr(self.target, "pipeline", self.target))
             
-            # Esecuzione identica al vecchio script Kaggle
             output_orig = anonymizer_obj(
-                tensor_orig_clean.to(self.device),
+                tensor_orig_clean,
                 truncation_value=1.0,
                 multi_modal_truncation=False,
                 amp=False
             )
             output_adv = anonymizer_obj(
-                tensor_adv_clean.to(self.device),
+                tensor_adv_clean,
                 truncation_value=1.0,
                 multi_modal_truncation=False,
                 amp=False
             )
             
-            # Estrazione sicura dell'immagine dai dizionari o tensori di output
+            # Estrazione sicura dell'immagine dall'output
             def extract_img_tensor(out):
                 if isinstance(out, dict):
                     res = out.get("im", out.get("img", list(out.values())[0]))
@@ -188,7 +197,7 @@ class BenchmarkRunner:
             pipeline_out_adv = extract_img_tensor(output_adv)
             
             # Detection per il ritaglio del volto
-            detections = self.detector_wrapper(tensor_orig_clean.float().to(self.device))
+            detections = self.detector_wrapper(tensor_orig_clean.float())
 
         def tensor_to_numpy(t):
             if t.dim() == 4:
