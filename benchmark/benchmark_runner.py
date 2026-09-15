@@ -235,21 +235,7 @@ class BenchmarkRunner:
         except Exception as e:
             print(f"[DEBUG] Errore estrazione box corretto: {e}")
 
-        if box is not None:
-            x1, y1, x2, y2 = box
-            h, w = orig_np.shape[:2]
-            # Margine per catturare correttamente l'area generata da StyleGAN
-            pad = int((y2 - y1) * 0.1)
-            x1, y1 = max(0, x1 - pad), max(0, y1 - pad)
-            x2, y2 = min(w, x2 + pad), min(h, y2 + pad)
-            
-            face_orig = orig_np[y1:y2, x1:x2]
-            face_orig_pipe = orig_pipeline_np[y1:y2, x1:x2]
-            face_adv_pipe = adv_pipeline_np[y1:y2, x1:x2]
-        else:
-            # Fallimento nel trovare il box: usiamo un ritaglio centrale di sicurezza o l'immagine intera
-            print("[WARNING] Impossibile estrarre il bounding box del volto, uso l'immagine intera per il plot.")
-            face_orig, face_orig_pipe, face_adv_pipe = orig_np, orig_pipeline_np, adv_pipeline_np
+        face_orig, face_orig_pipe, face_adv_pipe = orig_np, orig_pipeline_np, adv_pipeline_np
 
         # 5. Generazione del plot a 3 pannelli
         fig, axes = plt.subplots(1, 3, figsize=(12, 4))
