@@ -87,24 +87,18 @@ try:
     def _patched_load_file_or_url(file_url, *args, **kwargs):
         url_str = str(file_url).lower()
         
-        # Cerca tutti i file .pth o .ckpt disponibili nella cartella dei modelli
         all_candidates = []
         for d in [weights_dir, repo_root / "models"]:
             if d.exists():
                 all_candidates.extend(list(d.glob("**/*.pth")) + list(d.glob("**/*.ckpt")))
 
-        # Se viene richiesto esplicitamente il detector DSFD
         if "dsfd" in url_str or "widerface" in url_str:
             if dsfd_weights.exists():
-                print(f"[OFFLINE WEIGHTS] Restituito DSFD locale: {dsfd_weights}")
                 return str(dsfd_weights)
         
-        # Altrimenti, cerchiamo il peso del generatore (escludendo DSFD)
         generator_candidates = [c for c in all_candidates if "dsfd" not in c.name.lower() and "widerface" not in c.name.lower()]
         if generator_candidates:
-            chosen = generator_candidates[0]
-            print(f"[OFFLINE WEIGHTS] Intercettato URL '{file_url[:50]}...'. Uso generatore locale: {chosen}")
-            return str(chosen)
+            return str(generator_candidates[0])
                         
         return _original_load_file_or_url(file_url, *args, **kwargs)
 
@@ -150,6 +144,7 @@ except ModuleNotFoundError:
             return lambda *args, **kwargs: None
 
     densepose = types.ModuleType("densepose")
+    sys.modules["densepose"] = densepose
     sys.modules["densepose.data"] = densepose
     sys.modules["densepose.data.utils"] = densepose
     sys.modules["densepose.modeling"] = densepose
@@ -185,6 +180,24 @@ try:
     dp2.infer.load_generator_state = _patched_load_generator_state
 except ImportError:
     pass
+
+
+# Wrapper per garantire che la pipeline esponga sia .generator che .detector per PGDAttack
+class DeepPrivacy2PipelineWrapper:
+    def __init__(self, generator, detector=None):
+        self.generator = generator
+        self.detector = detector
+        if self.detector is None:
+            # Inizializza un detector di fallback compatibile se non presente
+            try:
+                from detectors.dsfd import DSFDDetector
+                # Crea un'istanza leggera o usa il detector DSFD standard del framework
+                self.detector = types.SimpleNamespace()
+                from face_detection import DSFD
+                self.detector.face_detector = DSFD()
+                self.detector.face_mean = torch.tensor([104.0, 117.0, 123.0]).view(1, 3, 1, 1)
+            except Exception:
+                pass
 
 
 # 5. Classe Target per la De-identificazione
@@ -232,16 +245,25 @@ class DeepPrivacy2Target(BaseDeidentificationTarget):
                 pass
 
             if hasattr(cfg, "anonymizer"):
-                pipeline = instantiate(cfg.anonymizer)
+                raw_pipeline = instantiate(cfg.anonymizer)
             elif hasattr(cfg, "generator"):
                 from dp2.infer import build_trained_generator
-                pipeline = build_trained_generator(cfg)
+                raw_pipeline = build_trained_generator(cfg)
             else:
-                pipeline = instantiate(cfg)
+                raw_pipeline = instantiate(cfg)
         finally:
             os.chdir(orig_cwd)
 
-        return pipeline
+        # Creazione del wrapper per esporre correttamente detector e generator a PGDAttack
+        detector_obj = getattr(raw_pipeline, "detector", None)
+        if detector_obj is None and hasattr(raw_pipeline, "detectors"):
+            from dp2.anonymizer.anonymizer import FaceDetection
+            detector_obj = raw_pipeline.detectors.get(FaceDetection, None)
+
+        generator_obj = getattr(raw_pipeline, "generator", raw_pipeline)
+
+        pipeline_wrapper = DeepPrivacy2PipelineWrapper(generator=generator_obj, detector=detector_obj)
+        return pipeline_wrapper
 
     def process_image(self, image_tensor):
         device = image_tensor.device
@@ -257,39 +279,21 @@ class DeepPrivacy2Target(BaseDeidentificationTarget):
             img_uint8 = img_batch.squeeze(0)
 
         anonymized_img = None
+        gen_to_use = getattr(self.pipeline, "generator", self.pipeline)
 
-        for method_name in ["anonymize_image", "anonymize", "process"]:
-            if hasattr(self.pipeline, method_name):
-                try:
-                    func = getattr(self.pipeline, method_name)
-                    img_np = img_uint8.permute(1, 2, 0).cpu().numpy()
-                    res = func(img_np)
-                    if res is not None:
-                        anonymized_img = res
-                        break
-                except Exception:
-                    continue
-
-        if anonymized_img is None:
-            try:
-                detector_obj = None
-                if hasattr(self.pipeline, "detectors"):
-                    from dp2.anonymizer.anonymizer import FaceDetection
-                    detector_obj = self.pipeline.detectors.get(FaceDetection, None)
-                elif hasattr(self.pipeline, "face_detector"):
-                    detector_obj = self.pipeline.face_detector
-
-                if detector_obj is not None and hasattr(self.pipeline, "generator"):
-                    boxes, _ = detector_obj.detect_faces(img_batch)
-                    if boxes is not None and len(boxes) > 0:
-                        gen_output = self.pipeline.generator(img_batch.float().to(device), boxes)
-                        anonymized_img = gen_output[0] if isinstance(gen_output, (list, tuple)) else gen_output
-                    else:
-                        anonymized_img = img_batch
+        try:
+            detector_obj = getattr(self.pipeline, "detector", None)
+            if detector_obj is not None and hasattr(detector_obj, "detect_faces"):
+                boxes, _ = detector_obj.detect_faces(img_batch)
+                if boxes is not None and len(boxes) > 0:
+                    gen_output = gen_to_use(img_batch.float().to(device), boxes)
+                    anonymized_img = gen_output[0] if isinstance(gen_output, (list, tuple)) else gen_output
                 else:
                     anonymized_img = img_batch
-            except Exception:
+            else:
                 anonymized_img = img_batch
+        except Exception:
+            anonymized_img = img_batch
 
         if isinstance(anonymized_img, torch.Tensor):
             out_tensor = anonymized_img.detach().cpu()
