@@ -4,6 +4,15 @@ import types
 from pathlib import Path
 import torch
 
+# Sopprime tutti i warning di Python, PyTorch e librerie terze
+warnings.filterwarnings("ignore")
+logging.getLogger("torch").setLevel(logging.ERROR)
+logging.getLogger("face_detection").setLevel(logging.ERROR)
+
+# Silenzia tutti i logger root di logging
+for logger_name in logging.root.manager.loggerDict:
+    logging.getLogger(logger_name).setLevel(logging.ERROR)
+    
 # 0. MOCKING PREVENTIVO DI DENSEPOSE E DIPENDENZE OPZIONALI
 class DummyModule(types.ModuleType):
     def __getattr__(self, name):
