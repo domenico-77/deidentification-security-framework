@@ -51,7 +51,7 @@ def main():
     dataset = LFWDataset(root_dir=args.dataset_path)
     runner = BenchmarkRunner(target, attack, dataset)
 
-    print("Avvio del Benchmark PGD...")
+    #print("Avvio del Benchmark PGD...")
     output_dir = "./results"
     
     # 1. Esecuzione del benchmark (con log in tempo reale grazie al nuovo logger)
