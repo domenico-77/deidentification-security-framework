@@ -152,38 +152,29 @@ class BenchmarkRunner:
         # 2. Esegue l'attacco PGD per ottenere l'immagine adversarial
         img_adv, _, _ = self.attack.perturb(img_orig_tensor=img_orig_tensor, epsilon=eps)
         
-        # 3. Rileva la bounding box del volto e processa le pipeline DeepPrivacy2
+        # 3. Rileva la bounding box e processa l'anonimizzazione evitando l'errore di unpack sul batch
         with torch.no_grad():
             det_input = img_orig_tensor.detach().byte().float()
             detections = self.detector_wrapper(det_input)
             
-            tensor_orig_uint8 = img_orig_tensor.detach().byte().unsqueeze(0)
-            tensor_adv_uint8 = img_adv.detach().byte().unsqueeze(0)
+            # Per evitare il crash di unpack nel detector interno di DeepPrivacy2, 
+            # passiamo il tensore senza la dimensione del batch aggiuntiva (formato 3, H, W in uint8)
+            tensor_orig_clean = img_orig_tensor.detach().byte()
+            tensor_adv_clean = img_adv.detach().byte()
             
-            # Parametri di default richiesti da forward_G in DeepPrivacy2
             synthesis_kwargs = {
                 "multi_modal_truncation": False,
                 "amp": True,
                 "truncation_value": 1.0
             }
             
-            # Gestione sicura del metodo di anonimizzazione del target
-            if hasattr(self.target, "anonymize"):
-                # Se il target ha un metodo personalizzato di alto livello
-                try:
-                    pipeline_out_orig = self.target.anonymize(tensor_orig_uint8)
-                    pipeline_out_adv = self.target.anonymize(tensor_adv_uint8)
-                except TypeError:
-                    pipeline_out_orig = self.target.anonymize(tensor_orig_uint8, **synthesis_kwargs)
-                    pipeline_out_adv = self.target.anonymize(tensor_adv_uint8, **synthesis_kwargs)
-            elif hasattr(self.target, "pipeline") and hasattr(self.target.pipeline, "anonymize"):
-                pipeline_out_orig = self.target.pipeline.anonymize(tensor_orig_uint8, **synthesis_kwargs)
-                pipeline_out_adv = self.target.pipeline.anonymize(tensor_adv_uint8, **synthesis_kwargs)
+            pipeline_obj = getattr(self.target, "pipeline", getattr(self.target, "anonymizer", self.target))
+            if hasattr(pipeline_obj, "anonymize"):
+                pipeline_out_orig = pipeline_obj.anonymize(tensor_orig_clean, **synthesis_kwargs)
+                pipeline_out_adv = pipeline_obj.anonymize(tensor_adv_clean, **synthesis_kwargs)
             else:
-                pipeline_obj = getattr(self.target, "pipeline", self.target)
-                # Invocazione diretta dell'anonymizer passando i parametri di sintesi attesi da forward_G
-                pipeline_out_orig = pipeline_obj(tensor_orig_uint8, **synthesis_kwargs)
-                pipeline_out_adv = pipeline_obj(tensor_adv_uint8, **synthesis_kwargs)
+                pipeline_out_orig = pipeline_obj(tensor_orig_clean, **synthesis_kwargs)
+                pipeline_out_adv = pipeline_obj(tensor_adv_clean, **synthesis_kwargs)
 
         def tensor_to_numpy(t):
             if t.dim() == 4:
