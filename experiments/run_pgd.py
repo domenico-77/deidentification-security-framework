@@ -1,6 +1,8 @@
 import sys
 from pathlib import Path
-
+import random
+import numpy as np
+import torch
 # Aggiunge la directory padre di 'experiments' (la root del progetto) a sys.path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -15,8 +17,19 @@ from detectors.dsfd import DSFDDetector
 from attacks.pgd import PGDAttack
 from benchmark.benchmark_runner import BenchmarkRunner
 
+def set_seed(seed_value=42):
+    """Fissa i seed per garantire la riproducibilità degli esperimenti."""
+    random.seed(seed_value)
+    np.random.seed(seed_value)
+    torch.manual_seed(seed_value)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed_value)
+        torch.cuda.manual_seed_all(seed_value)
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
 
 def main():
+    set_seed(42)
     parser = argparse.ArgumentParser(description="Run PGD Benchmark against DeepPrivacy2")
     parser.add_argument("--config", type=str, default="configs/pgd.yaml")
     parser.add_argument("--dataset_path", type=str, required=True)
