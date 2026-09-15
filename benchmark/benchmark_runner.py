@@ -152,19 +152,43 @@ class BenchmarkRunner:
         img_adv, _, _ = self.attack.perturb(img_orig_tensor=img_orig_tensor, epsilon=eps)
         
         # 3. Chiamata corretta alla pipeline di anonimizzazione di DeepPrivacy2 (formato 3D: C, H, W)
+        # 3. Chiamata alla pipeline di anonimizzazione speculare al tuo vecchio script
         with torch.no_grad():
-            tensor_orig_clean = img_orig_tensor.detach().byte()
-            tensor_adv_clean = img_adv.detach().byte()
+            # Convertiamo i tensori nel formato pulito (C, H, W) come facevi nel blocco di test
+            tensor_orig_clean = img_orig_tensor.detach().cpu().byte() if img_orig_tensor.is_cuda else img_orig_tensor.detach().byte()
+            tensor_adv_clean = img_adv.detach().cpu().byte() if img_adv.is_cuda else img_adv.detach().byte()
             
-            # Recuperiamo direttamente l'oggetto anonymizer principale
             anonymizer_obj = getattr(self.target, "anonymizer", getattr(self.target, "pipeline", self.target))
             
-            # Esecuzione nativa di DeepPrivacy2 con tensori a 3 dimensioni
-            pipeline_out_orig = anonymizer_obj(tensor_orig_clean)
-            pipeline_out_adv = anonymizer_obj(tensor_adv_clean)
+            # Esecuzione identica al vecchio script Kaggle
+            output_orig = anonymizer_obj(
+                tensor_orig_clean.to(self.device),
+                truncation_value=1.0,
+                multi_modal_truncation=False,
+                amp=False
+            )
+            output_adv = anonymizer_obj(
+                tensor_adv_clean.to(self.device),
+                truncation_value=1.0,
+                multi_modal_truncation=False,
+                amp=False
+            )
             
-            # Estrazione delle detection pulite per il ritaglio del volto
-            detections = self.detector_wrapper(tensor_orig_clean.float())
+            # Estrazione sicura dell'immagine dai dizionari o tensori di output
+            def extract_img_tensor(out):
+                if isinstance(out, dict):
+                    res = out.get("im", out.get("img", list(out.values())[0]))
+                else:
+                    res = out
+                if isinstance(res, torch.Tensor):
+                    res = res.detach().cpu()
+                return res
+
+            pipeline_out_orig = extract_img_tensor(output_orig)
+            pipeline_out_adv = extract_img_tensor(output_adv)
+            
+            # Detection per il ritaglio del volto
+            detections = self.detector_wrapper(tensor_orig_clean.float().to(self.device))
 
         def tensor_to_numpy(t):
             if t.dim() == 4:
