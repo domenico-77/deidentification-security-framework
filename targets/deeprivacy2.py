@@ -39,6 +39,27 @@ for p in [dp2_inner, repo_root]:
         sys.path.insert(0, str(p))
 
 
+# 1.5 PATCH PREVENTIVA DI dp2.utils.load_config PER I PERCORSI RELATIVI DEI MODELLI
+try:
+    import dp2.utils as dp2_utils_mod
+    orig_load_config = dp2_utils_mod.load_config
+    def patched_load_config(config_path, *args, **kwargs):
+        path_obj = Path(config_path)
+        if not path_obj.is_file():
+            candidate = repo_root / config_path
+            if candidate.is_file():
+                config_path = candidate
+            else:
+                candidate_inner = repo_root / "deep_privacy2" / config_path
+                if candidate_inner.is_file():
+                    config_path = candidate_inner
+        return orig_load_config(config_path, *args, **kwargs)
+    dp2_utils_mod.load_config = patched_load_config
+    sys.modules["dp2.utils"] = dp2_utils_mod
+except Exception as e:
+    print(f"[WARNING] Impossibile applicare la patch preventiva a dp2.utils: {e}")
+
+
 # 2. Patch robusta per DSFD e StyleGAN (Modalità 100% Offline)
 dsfd_model_path = models_dir / "WIDERFace_DSFD_RES152.pth"
 fdf_ckpt_path = models_dir / "stylegan_fdf128.ckpt"
@@ -82,23 +103,6 @@ class DeepPrivacy2Target(BaseDeidentificationTarget):
 
     def _load_pipeline(self):
         from tops.config import LazyConfig, instantiate
-        import dp2.utils as dp2_utils
-
-        # Patch per dp2.utils.load_config affinché risolva i path relativi usando repo_root
-        orig_load_config = dp2_utils.load_config
-        def patched_load_config(config_path, *args, **kwargs):
-            path_obj = Path(config_path)
-            if not path_obj.is_file():
-                candidate = repo_root / config_path
-                if candidate.is_file():
-                    config_path = candidate
-                else:
-                    candidate_inner = repo_root / "deep_privacy2" / config_path
-                    if candidate_inner.is_file():
-                        config_path = candidate_inner
-            return orig_load_config(config_path, *args, **kwargs)
-
-        dp2_utils.load_config = patched_load_config
 
         possible_paths = [
             repo_root / "configs" / "anonymizers" / "face.py",
