@@ -151,25 +151,19 @@ class BenchmarkRunner:
         # 2. Esegue l'attacco PGD per ottenere l'immagine adversarial
         img_adv, _, _ = self.attack.perturb(img_orig_tensor=img_orig_tensor, epsilon=eps)
         
-        # 3. Chiamata corretta alla pipeline di anonimizzazione di DeepPrivacy2
+        # 3. Chiamata corretta alla pipeline di anonimizzazione di DeepPrivacy2 (formato 3D: C, H, W)
         with torch.no_grad():
             tensor_orig_clean = img_orig_tensor.detach().byte()
             tensor_adv_clean = img_adv.detach().byte()
             
-            # Recuperiamo direttamente l'oggetto anonymizer principale per sfruttare il metodo nativo
+            # Recuperiamo direttamente l'oggetto anonymizer principale
             anonymizer_obj = getattr(self.target, "anonymizer", getattr(self.target, "pipeline", self.target))
             
-            # Se la pipeline accetta il batch o richiede un formato specifico (B, C, H, W)
-            if tensor_orig_clean.dim() == 3:
-                tensor_orig_clean = tensor_orig_clean.unsqueeze(0)
-                tensor_adv_clean = tensor_adv_clean.unsqueeze(0)
-                
-            # Esecuzione standard dell'anonimizzazione con DeepPrivacy2
-            # Assicurati che i parametri di generazione siano abilitati per StyleGAN
+            # Esecuzione nativa di DeepPrivacy2 con tensori a 3 dimensioni
             pipeline_out_orig = anonymizer_obj(tensor_orig_clean)
             pipeline_out_adv = anonymizer_obj(tensor_adv_clean)
             
-            # Estrazione delle detection pulite per ritagliare il volto nella zona corretta
+            # Estrazione delle detection pulite per il ritaglio del volto
             detections = self.detector_wrapper(tensor_orig_clean.float())
 
         def tensor_to_numpy(t):
@@ -200,7 +194,7 @@ class BenchmarkRunner:
         if box is not None:
             x1, y1, x2, y2 = box
             h, w = orig_np.shape[:2]
-            # Aggiungiamo un leggero margine (padding) per catturare bene il volto sintetizzato da StyleGAN
+            # Margine per catturare correttamente l'area generata da StyleGAN
             pad = int((y2 - y1) * 0.1)
             x1, y1 = max(0, x1 - pad), max(0, y1 - pad)
             x2, y2 = min(w, x2 + pad), min(h, y2 + pad)
