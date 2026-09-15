@@ -39,7 +39,7 @@ for p in [dp2_inner, repo_root]:
         sys.path.insert(0, str(p))
 
 
-# 1.5 PATCH PREVENTIVA DI dp2.utils.load_config PER I PERCORSI RELATIVI DEI MODELLI
+# 1.5 PATCH PREVENTIVA DI dp2.utils.load_config PER I PERCORSI RELATIVI
 try:
     import dp2.utils as dp2_utils_mod
     orig_load_config = dp2_utils_mod.load_config
@@ -74,6 +74,21 @@ except ImportError:
 
 import tops
 import tops.utils.file_util
+
+# Intercettiamo anche torch.load a livello globale per reindirizzare i checkpoint di StyleGAN se richiesto
+orig_torch_load = torch.load
+def patched_torch_load(f, *args, **kwargs):
+    f_str = str(f)
+    if "stylegan" in f_str.lower() or f_str.endswith(".ckpt"):
+        if fdf_ckpt_path.exists() and Path(f_str).resolve() != fdf_ckpt_path.resolve():
+            # Se viene richiesto un checkpoint fdf che non esiste o punta ad URL remoto, restituiamo il nostro file locale
+            return orig_torch_load(str(fdf_ckpt_path), *args, **kwargs)
+    if not os.path.exists(f_str) and ("http://" in f_str or "https://" in f_str or not f_str.startswith("/")):
+        if fdf_ckpt_path.exists():
+            return orig_torch_load(str(fdf_ckpt_path), *args, **kwargs)
+    return orig_torch_load(f, *args, **kwargs)
+
+torch.load = patched_torch_load
 
 def offline_load_file_or_url(path_or_url, map_location=None, md5sum=None):
     path_str = str(path_or_url)
