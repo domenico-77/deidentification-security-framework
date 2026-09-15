@@ -36,7 +36,6 @@ _original_load_config = None
 
 
 def _patched_load_config(config_path, *args, **kwargs):
-    # Intercetta e forza il file corretto se viene richiesto quello vecchio
     if config_path and ("stylegan_fdf128" in str(config_path) or "fdf128" in str(config_path)):
         config_path = "configs/fdf/stylegan.py"
         
@@ -77,6 +76,33 @@ if weights_src.exists():
             shutil.copy(weights_src, dst)
 
     torch.hub.download_url_to_file = _noop_download
+
+
+# 3.5. Patch per il caricamento offline dei pesi di StyleGAN tramite tops
+try:
+    import tops
+    _original_load_file_or_url = tops.load_file_or_url
+
+    def _patched_load_file_or_url(file_url, *args, **kwargs):
+        local_search_dirs = [
+            Path("/kaggle/input/datasets/domenicovicenti/deep-privacy2-models"),
+            Path("/kaggle/input/domenicovicenti/deep-privacy2-models"),
+            repo_root / "models",
+        ]
+        
+        for d in local_search_dirs:
+            if d.exists():
+                candidates = list(d.glob("**/*.pth")) + list(d.glob("**/*.ckpt"))
+                for cand in candidates:
+                    if any(k in cand.name.lower() for k in ["stylegan", "generator", "fdf", "face"]):
+                        print(f"[OFFLINE WEIGHTS] Intercettato download URL/File '{file_url}'. Uso peso locale: {cand}")
+                        return str(cand)
+                        
+        return _original_load_file_or_url(file_url, *args, **kwargs)
+
+    tops.load_file_or_url = _patched_load_file_or_url
+except ImportError:
+    pass
 
 
 # 4. Mocking dipendenze esterne opzionali o mancanti nel container Kaggle
@@ -156,14 +182,12 @@ except ImportError:
 
 # 5. Classe Target per la De-identificazione
 class DeepPrivacy2Target(BaseDeidentificationTarget):
-    # MODIFICA CHIAVE: Impostato di default il path corretto di stylegan.py
     def __init__(self, config_path: str = "configs/fdf/stylegan.py", models_dir: str = None):
         self.pipeline = self._load_pipeline(config_path, models_dir)
 
     def _load_pipeline(self, config_path, models_dir):
         from tops.config import LazyConfig, instantiate
 
-        # Se viene passato un alias vecchio, lo mappiamo direttamente a stylegan.py
         if config_path is None or config_path in ["fdf128", "stylegan_fdf128", "face_fdf128"]:
             config_path = "configs/fdf/stylegan.py"
 
