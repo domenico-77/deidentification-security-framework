@@ -115,12 +115,27 @@ class BenchmarkRunner:
         eps = best_run['epsilon']
         image_name = best_run['image']
         
-        try:
-            idx = int(image_name.split("_")[1].split(".")[0])
-        except Exception:
+        # Trova l'indice corrispondente nel dataset basandosi sul nome del file LFW
+        idx = 0
+        found = False
+        if hasattr(self.dataset, "image_paths"):
+            for i, p in enumerate(self.dataset.image_paths):
+                if os.path.basename(p) == image_name:
+                    idx = i
+                    found = True
+                    break
+        elif hasattr(self.dataset, "samples"):
+            for i, (p, _) in enumerate(self.dataset.samples):
+                if os.path.basename(p) == image_name:
+                    idx = i
+                    found = True
+                    break
+                    
+        if not found:
+            print(f"[WARNING] Impossibile trovare '{image_name}' nel dataset per nome, uso il primo elemento.")
             idx = 0
             
-        print(f"\nGenerazione visualizzazione ritagli di volto per: {image_name} | Epsilon={eps}")
+        print(f"\nGenerazione visualizzazione ritagli di volto per: {image_name} | Epsilon={eps} (Indice dataset: {idx})")
         
         # 1. Recupera l'immagine originale dal dataset
         batch = self.dataset[idx]
@@ -134,12 +149,17 @@ class BenchmarkRunner:
             det_input = img_orig_tensor.detach().byte().float()  # Forma corretta (3, H, W) per il detector
             detections = self.detector_wrapper(det_input)
             
+            # Gestione sicura del metodo di anonimizzazione del target
             if hasattr(self.target, "anonymize"):
                 pipeline_out_orig = self.target.anonymize(img_orig_tensor.unsqueeze(0))
                 pipeline_out_adv = self.target.anonymize(img_adv.unsqueeze(0))
+            elif hasattr(self.target, "pipeline") and hasattr(self.target.pipeline, "anonymize"):
+                pipeline_out_orig = self.target.pipeline.anonymize(img_orig_tensor.unsqueeze(0))
+                pipeline_out_adv = self.target.pipeline.anonymize(img_adv.unsqueeze(0))
             else:
-                pipeline_out_orig = self.target(img_orig_tensor.unsqueeze(0))
-                pipeline_out_adv = self.target(img_adv.unsqueeze(0))
+                pipeline_obj = getattr(self.target, "pipeline", self.target)
+                pipeline_out_orig = pipeline_obj(img_orig_tensor.unsqueeze(0))
+                pipeline_out_adv = pipeline_obj(img_adv.unsqueeze(0))
 
         def tensor_to_numpy(t):
             if t.dim() == 4:
@@ -172,7 +192,7 @@ class BenchmarkRunner:
         fig, axes = plt.subplots(1, 3, figsize=(12, 4))
         
         axes[0].imshow(face_orig)
-        axes[0].set_title(f"Volto Originale\n(Eps: {eps})")
+        axes[0].set_title(f"Volto Originale\n({image_name})")
         axes[0].axis("off")
         
         axes[1].imshow(face_orig_pipe)
