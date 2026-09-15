@@ -82,6 +82,23 @@ class DeepPrivacy2Target(BaseDeidentificationTarget):
 
     def _load_pipeline(self):
         from tops.config import LazyConfig, instantiate
+        import dp2.utils as dp2_utils
+
+        # Patch per dp2.utils.load_config affinché risolva i path relativi usando repo_root
+        orig_load_config = dp2_utils.load_config
+        def patched_load_config(config_path, *args, **kwargs):
+            path_obj = Path(config_path)
+            if not path_obj.is_file():
+                candidate = repo_root / config_path
+                if candidate.is_file():
+                    config_path = candidate
+                else:
+                    candidate_inner = repo_root / "deep_privacy2" / config_path
+                    if candidate_inner.is_file():
+                        config_path = candidate_inner
+            return orig_load_config(config_path, *args, **kwargs)
+
+        dp2_utils.load_config = patched_load_config
 
         possible_paths = [
             repo_root / "configs" / "anonymizers" / "face.py",
@@ -109,7 +126,6 @@ class DeepPrivacy2Target(BaseDeidentificationTarget):
 
         orig_cwd = os.getcwd()
         try:
-            # Spostiamoci su /tmp (cartella scrivibile) invece del repo read-only
             os.chdir("/tmp")
             sys.path_importer_cache.clear()
 
