@@ -60,43 +60,51 @@ except ImportError:
 
 
 # 3. Patch per PyTorch Hub (modalità offline per pesi DSFD)
-weights_src = Path("/kaggle/input/datasets/domenicovicenti/deep-privacy2-models/WIDERFace_DSFD_RES152.pth")
+weights_dir = Path("/kaggle/input/datasets/domenicovicenti/deep-privacy2-models")
+dsfd_weights = weights_dir / "WIDERFace_DSFD_RES152.pth"
 
-if weights_src.exists():
+if dsfd_weights.exists():
     cache_dir = Path("/root/.cache/torch/hub/checkpoints")
     cache_dir.mkdir(parents=True, exist_ok=True)
     
     expected_filename = "61be4ec7-8c11-4a4a-a9f4-827144e4ab4f0c2764c1-80a0-4083-bbfa-68419f889b80e4692358-979b-458e-97da-c1a1660b3314"
     
-    shutil.copy(weights_src, cache_dir / "WIDERFace_DSFD_RES152.pth")
-    shutil.copy(weights_src, cache_dir / expected_filename)
+    shutil.copy(dsfd_weights, cache_dir / "WIDERFace_DSFD_RES152.pth")
+    shutil.copy(dsfd_weights, cache_dir / expected_filename)
 
     def _noop_download(url, dst, *args, **kwargs):
         if not Path(dst).exists():
-            shutil.copy(weights_src, dst)
+            shutil.copy(dsfd_weights, dst)
 
     torch.hub.download_url_to_file = _noop_download
 
 
-# 3.5. Patch per il caricamento offline dei pesi di StyleGAN tramite tops
+# 3.5. Patch mirata per il caricamento offline dei pesi (DSFD vs StyleGAN)
 try:
     import tops
     _original_load_file_or_url = tops.load_file_or_url
 
     def _patched_load_file_or_url(file_url, *args, **kwargs):
-        local_search_dirs = [
-            Path("/kaggle/input/datasets/domenicovicenti/deep-privacy2-models"),
-            Path("/kaggle/input/domenicovicenti/deep-privacy2-models"),
-            repo_root / "models",
-        ]
+        url_str = str(file_url).lower()
         
-        for d in local_search_dirs:
+        # Cerca tutti i file .pth o .ckpt disponibili nella cartella dei modelli
+        all_candidates = []
+        for d in [weights_dir, repo_root / "models"]:
             if d.exists():
-                candidates = list(d.glob("**/*.pth")) + list(d.glob("**/*.ckpt"))
-                for cand in candidates:
-                    if any(k in cand.name.lower() for k in ["stylegan", "generator", "fdf", "face"]):
-                        print(f"[OFFLINE WEIGHTS] Intercettato download URL/File '{file_url}'. Uso peso locale: {cand}")
-                        return str(cand)
+                all_candidates.extend(list(d.glob("**/*.pth")) + list(d.glob("**/*.ckpt")))
+
+        # Se viene richiesto esplicitamente il detector DSFD
+        if "dsfd" in url_str or "widerface" in url_str:
+            if dsfd_weights.exists():
+                print(f"[OFFLINE WEIGHTS] Restituito DSFD locale: {dsfd_weights}")
+                return str(dsfd_weights)
+        
+        # Altrimenti, cerchiamo il peso del generatore (escludendo DSFD)
+        generator_candidates = [c for c in all_candidates if "dsfd" not in c.name.lower() and "widerface" not in c.name.lower()]
+        if generator_candidates:
+            chosen = generator_candidates[0]
+            print(f"[OFFLINE WEIGHTS] Intercettato URL '{file_url[:50]}...'. Uso generatore locale: {chosen}")
+            return str(chosen)
                         
         return _original_load_file_or_url(file_url, *args, **kwargs)
 
@@ -142,7 +150,6 @@ except ModuleNotFoundError:
             return lambda *args, **kwargs: None
 
     densepose = types.ModuleType("densepose")
-    sys.modules["densepose"] = densepose
     sys.modules["densepose.data"] = densepose
     sys.modules["densepose.data.utils"] = densepose
     sys.modules["densepose.modeling"] = densepose
