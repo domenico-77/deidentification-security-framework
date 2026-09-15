@@ -75,17 +75,26 @@ except ImportError:
 import tops
 import tops.utils.file_util
 
-# Intercettiamo anche torch.load a livello globale per reindirizzare i checkpoint di StyleGAN se richiesto
+# Intercettiamo torch.load per restituire il dizionario del checkpoint locale corretto
 orig_torch_load = torch.load
 def patched_torch_load(f, *args, **kwargs):
     f_str = str(f)
-    if "stylegan" in f_str.lower() or f_str.endswith(".ckpt"):
-        if fdf_ckpt_path.exists() and Path(f_str).resolve() != fdf_ckpt_path.resolve():
-            # Se viene richiesto un checkpoint fdf che non esiste o punta ad URL remoto, restituiamo il nostro file locale
-            return orig_torch_load(str(fdf_ckpt_path), *args, **kwargs)
-    if not os.path.exists(f_str) and ("http://" in f_str or "https://" in f_str or not f_str.startswith("/")):
+    if "stylegan" in f_str.lower() or f_str.endswith(".ckpt") or "http" in f_str:
         if fdf_ckpt_path.exists():
-            return orig_torch_load(str(fdf_ckpt_path), *args, **kwargs)
+            # Carichiamo effettivamente il file .ckpt locale
+            loaded = orig_torch_load(str(fdf_ckpt_path), *args, **kwargs)
+            # Se il checkpoint caricato non ha le chiavi standard attese da dp2.infer, le normalizziamo
+            if isinstance(loaded, dict):
+                if "EMA_generator" not in loaded and "running_average_generator" not in loaded:
+                    # Troviamo la chiave giusta o mappiamola sul primo dizionario disponibile o su state_dict
+                    if "generator" in loaded:
+                        loaded["EMA_generator"] = loaded["generator"]
+                    elif "state_dict" in loaded:
+                        loaded["EMA_generator"] = loaded["state_dict"]
+                    else:
+                        # Fallback: usiamo l'intero dizionario se contiene i pesi
+                        loaded["EMA_generator"] = loaded
+            return loaded
     return orig_torch_load(f, *args, **kwargs)
 
 torch.load = patched_torch_load
