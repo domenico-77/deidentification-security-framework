@@ -152,14 +152,17 @@ class BenchmarkRunner:
         # 2. Esegue l'attacco PGD per ottenere l'immagine adversarial
         img_adv, _, _ = self.attack.perturb(img_orig_tensor=img_orig_tensor, epsilon=eps)
         
-        # 3. Rileva la bounding box del volto e processa le pipeline DeepPrivacy2 (convertendo in uint8)
+        # 3. Rileva la bounding box del volto e processa le pipeline DeepPrivacy2
         with torch.no_grad():
-            det_input = img_orig_tensor.detach().byte().float()  # Forma corretta (3, H, W) per il detector
+            # Utilizziamo lo stesso metodo sicuro di count_faces per rilevare le coordinate
+            det_input = img_orig_tensor.detach().byte().float()
             detections = self.detector_wrapper(det_input)
             
-            # Conversione esplicita in uint8 come richiesto dalla assertion di DeepPrivacy2
-            tensor_orig_uint8 = img_orig_tensor.detach().byte().unsqueeze(0)
-            tensor_adv_uint8 = img_adv.detach().byte().unsqueeze(0)
+            # DeepPrivacy2 richiede uint8. Se la pipeline si aspetta un batch a 4 dimensioni (B, C, H, W),
+            # passiamo il tensore con unsqueeze(0). Se dovesse fallire internamente sul detector della pipeline,
+            # passiamo direttamente l'immagine pulita/avversaria al metodo di anonymize.
+            tensor_orig_uint8 = img_orig_tensor.detach().byte()
+            tensor_adv_uint8 = img_adv.detach().byte()
             
             # Gestione sicura del metodo di anonimizzazione del target
             if hasattr(self.target, "anonymize"):
