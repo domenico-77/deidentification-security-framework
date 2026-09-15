@@ -55,8 +55,8 @@ def main():
     output_dir = "./results"
     
     # 1. Esecuzione del benchmark (con log in tempo reale grazie al nuovo logger)
-    #runner.run_benchmark(epsilons=[2.0, 4.0, 8.0, 16.0, 24.0, 32.0], num_samples=100, output_dir=output_dir)
-    runner.run_benchmark(epsilons=[8.0], num_samples=5, output_dir=output_dir)
+    runner.run_benchmark(epsilons=[2.0, 4.0, 8.0, 16.0, 24.0, 32.0], num_samples=100, output_dir=output_dir)
+    #runner.run_benchmark(epsilons=[8.0], num_samples=5, output_dir=output_dir)
 
     # 2. Generazione automatica del grafico di confronto (Post-analisi)
     csv_path = os.path.join(output_dir, "benchmark_results.csv")
