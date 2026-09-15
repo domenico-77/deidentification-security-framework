@@ -47,7 +47,7 @@ class BenchmarkRunner:
                 
                 batch = self.dataset[idx]
                 img_orig_tensor = batch[0].float().to(self.device) if isinstance(batch, (list, tuple)) else batch.float().to(self.device)
-                image_name = f"sample_{idx}.jpg"
+                image_name = self._get_image_name(idx)
                 
                 clean_faces = self.count_faces(img_orig_tensor)
                 if clean_faces == 0:
@@ -70,8 +70,6 @@ class BenchmarkRunner:
                 # Stampa dei log dettagliati in tempo reale
                 print_run_header(idx + 1, max_samples, image_name, eps)
                 print_attack_results(
-                    detector_evasion=evaded,
-                    pipeline_bypass=True,
                     attack_success=evaded,
                     success_iteration=succ_iter,
                     metrics=metrics,
