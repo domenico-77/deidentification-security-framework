@@ -3,7 +3,8 @@ import os
 import types
 from pathlib import Path
 import torch
-
+import warnings
+import logging
 # Sopprime tutti i warning di Python, PyTorch e librerie terze
 warnings.filterwarnings("ignore")
 logging.getLogger("torch").setLevel(logging.ERROR)
