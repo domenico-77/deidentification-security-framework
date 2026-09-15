@@ -152,22 +152,26 @@ class BenchmarkRunner:
         # 2. Esegue l'attacco PGD per ottenere l'immagine adversarial
         img_adv, _, _ = self.attack.perturb(img_orig_tensor=img_orig_tensor, epsilon=eps)
         
-        # 3. Rileva la bounding box del volto e processa le pipeline DeepPrivacy2
+        # 3. Rileva la bounding box del volto e processa le pipeline DeepPrivacy2 (convertendo in uint8)
         with torch.no_grad():
             det_input = img_orig_tensor.detach().byte().float()  # Forma corretta (3, H, W) per il detector
             detections = self.detector_wrapper(det_input)
             
+            # Conversione esplicita in uint8 come richiesto dalla assertion di DeepPrivacy2
+            tensor_orig_uint8 = img_orig_tensor.detach().byte().unsqueeze(0)
+            tensor_adv_uint8 = img_adv.detach().byte().unsqueeze(0)
+            
             # Gestione sicura del metodo di anonimizzazione del target
             if hasattr(self.target, "anonymize"):
-                pipeline_out_orig = self.target.anonymize(img_orig_tensor.unsqueeze(0))
-                pipeline_out_adv = self.target.anonymize(img_adv.unsqueeze(0))
+                pipeline_out_orig = self.target.anonymize(tensor_orig_uint8)
+                pipeline_out_adv = self.target.anonymize(tensor_adv_uint8)
             elif hasattr(self.target, "pipeline") and hasattr(self.target.pipeline, "anonymize"):
-                pipeline_out_orig = self.target.pipeline.anonymize(img_orig_tensor.unsqueeze(0))
-                pipeline_out_adv = self.target.pipeline.anonymize(img_adv.unsqueeze(0))
+                pipeline_out_orig = self.target.pipeline.anonymize(tensor_orig_uint8)
+                pipeline_out_adv = self.target.pipeline.anonymize(tensor_adv_uint8)
             else:
                 pipeline_obj = getattr(self.target, "pipeline", self.target)
-                pipeline_out_orig = pipeline_obj(img_orig_tensor.unsqueeze(0))
-                pipeline_out_adv = pipeline_obj(img_adv.unsqueeze(0))
+                pipeline_out_orig = pipeline_obj(tensor_orig_uint8)
+                pipeline_out_adv = pipeline_obj(tensor_adv_uint8)
 
         def tensor_to_numpy(t):
             if t.dim() == 4:
