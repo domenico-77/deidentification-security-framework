@@ -152,13 +152,11 @@ class BenchmarkRunner:
         # 2. Esegue l'attacco PGD per ottenere l'immagine adversarial
         img_adv, _, _ = self.attack.perturb(img_orig_tensor=img_orig_tensor, epsilon=eps)
         
-        # 3. Rileva la bounding box e processa l'anonimizzazione evitando l'errore di unpack sul batch
+        # 3. Rileva la bounding box e processa l'anonimizzazione
         with torch.no_grad():
             det_input = img_orig_tensor.detach().byte().float()
             detections = self.detector_wrapper(det_input)
             
-            # Per evitare il crash di unpack nel detector interno di DeepPrivacy2, 
-            # passiamo il tensore senza la dimensione del batch aggiuntiva (formato 3, H, W in uint8)
             tensor_orig_clean = img_orig_tensor.detach().byte()
             tensor_adv_clean = img_adv.detach().byte()
             
@@ -187,9 +185,17 @@ class BenchmarkRunner:
         orig_pipeline_np = tensor_to_numpy(pipeline_out_orig)
         adv_pipeline_np = tensor_to_numpy(pipeline_out_adv)
 
-        # 4. Estrae le coordinate del volto tramite il detector
+        # 4. Estrazione sicura delle coordinate del volto dalle detection
+        box = None
         if len(detections) > 0 and detections[0] is not None and len(detections[0]) > 0:
-            box = detections[0][0][:4].cpu().numpy().astype(int)
+            face_item = detections[0][0]
+            # Gestisce sia se face_item è un tensore/array diretto sia se è un oggetto strutturato
+            if hasattr(face_item, "cpu"):
+                box = face_item[:4].cpu().numpy().astype(int)
+            elif isinstance(face_item, (list, tuple, np.ndarray)):
+                box = np.array(face_item[:4]).astype(int)
+
+        if box is not None:
             x1, y1, x2, y2 = box
             h, w = orig_np.shape[:2]
             x1, y1 = max(0, x1), max(0, y1)
