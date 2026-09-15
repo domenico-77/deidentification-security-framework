@@ -28,7 +28,7 @@ def generate_plots(csv_path="./results/benchmark_results.csv", output_dir="./res
     plt.figure(figsize=(8, 5))
     plt.plot(grouped["epsilon"], grouped["asr_percent"], marker='o', linestyle='-', color='b', linewidth=2, markersize=6)
     plt.title("Attack Success Rate (ASR) vs Epsilon ($L_\\infty$)", fontsize=12, fontweight='bold')
-    plt.xlabel("Epsilon ($\epsilon$)", fontsize=10)
+    plt.xlabel(r"Epsilon ($\epsilon$)", fontsize=10)
     plt.ylabel("ASR (%)", fontsize=10)
     plt.grid(True, linestyle='--', alpha=0.6)
     plt.ylim(-5, 105)
@@ -42,7 +42,7 @@ def generate_plots(csv_path="./results/benchmark_results.csv", output_dir="./res
     plt.figure(figsize=(8, 5))
     plt.plot(grouped["epsilon"], grouped["psnr"], marker='s', linestyle='-', color='r', linewidth=2, markersize=6)
     plt.title("Qualità Percettiva (PSNR) vs Epsilon", fontsize=12, fontweight='bold')
-    plt.xlabel("Epsilon ($\epsilon$)", fontsize=10)
+    plt.xlabel(r"Epsilon ($\epsilon$)", fontsize=10)
     plt.ylabel("PSNR medio (dB)", fontsize=10)
     plt.grid(True, linestyle='--', alpha=0.6)
     
@@ -72,7 +72,7 @@ def generate_plots(csv_path="./results/benchmark_results.csv", output_dir="./res
     plt.figure(figsize=(8, 5))
     plt.plot(grouped["epsilon"], grouped["iterations"], marker='^', linestyle='-', color='darkgreen', linewidth=2, markersize=6)
     plt.title("Numero Medio di Iterazioni PGD al Successo", fontsize=12, fontweight='bold')
-    plt.xlabel("Epsilon ($\epsilon$)", fontsize=10)
+    plt.xlabel(r"Epsilon ($\epsilon$)", fontsize=10)
     plt.ylabel("Iterazioni medie", fontsize=10)
     plt.grid(True, linestyle='--', alpha=0.6)
     
@@ -85,7 +85,7 @@ def generate_plots(csv_path="./results/benchmark_results.csv", output_dir="./res
     plt.figure(figsize=(8, 5))
     plt.plot(grouped["epsilon"], grouped["pipeline_mse"], marker='d', linestyle='-', color='purple', linewidth=2, markersize=6)
     plt.title("MSE della Pipeline vs Epsilon", fontsize=12, fontweight='bold')
-    plt.xlabel("Epsilon ($\epsilon$)", fontsize=10)
+    plt.xlabel(r"Epsilon ($\epsilon$)", fontsize=10)
     plt.ylabel("Pipeline MSE medio", fontsize=10)
     plt.grid(True, linestyle='--', alpha=0.6)
     
