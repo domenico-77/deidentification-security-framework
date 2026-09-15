@@ -30,6 +30,14 @@ class BenchmarkRunner:
             return len(detections[0])
         return 0
 
+    def _get_image_name(self, idx):
+        """Estrae il nome reale del file dal dataset LFW se disponibile, altrimenti usa un fallback."""
+        if hasattr(self.dataset, "image_paths") and idx < len(self.dataset.image_paths):
+            return os.path.basename(self.dataset.image_paths[idx])
+        elif hasattr(self.dataset, "samples") and idx < len(self.dataset.samples):
+            return os.path.basename(self.dataset.samples[idx][0])
+        return f"sample_{idx}.jpg"
+
     def run_benchmark(self, epsilons=[2.0, 4.0, 8.0, 16.0, 24.0, 32.0], num_samples=100, output_dir="./results"):
         os.makedirs(output_dir, exist_ok=True)
         results = []
