@@ -185,15 +185,19 @@ class BenchmarkRunner:
         orig_pipeline_np = tensor_to_numpy(pipeline_out_orig)
         adv_pipeline_np = tensor_to_numpy(pipeline_out_adv)
 
-        # 4. Estrazione sicura delle coordinate del volto dalle detection
+        # 4. Estrazione sicura delle coordinate del volto convertendo l'iterabile in lista
         box = None
-        if len(detections) > 0 and detections[0] is not None and len(detections[0]) > 0:
-            face_item = detections[0][0]
-            # Gestisce sia se face_item è un tensore/array diretto sia se è un oggetto strutturato
-            if hasattr(face_item, "cpu"):
-                box = face_item[:4].cpu().numpy().astype(int)
-            elif isinstance(face_item, (list, tuple, np.ndarray)):
-                box = np.array(face_item[:4]).astype(int)
+        if len(detections) > 0 and detections[0] is not None:
+            try:
+                faces_list = list(detections[0])
+                if len(faces_list) > 0:
+                    face_item = faces_list[0]
+                    if hasattr(face_item, "cpu"):
+                        box = face_item[:4].cpu().numpy().astype(int)
+                    elif isinstance(face_item, (list, tuple, np.ndarray)):
+                        box = np.array(face_item[:4]).astype(int)
+            except Exception as e:
+                print(f"[DEBUG] Errore estrazione box: {e}")
 
         if box is not None:
             x1, y1, x2, y2 = box
