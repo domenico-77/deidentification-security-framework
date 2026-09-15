@@ -133,7 +133,7 @@ class BenchmarkRunner:
         
         # 3. Rileva la bounding box del volto e processa le pipeline DeepPrivacy2
         with torch.no_grad():
-            det_input = img_orig_tensor.unsqueeze(0).byte().float()
+            det_input = img_orig_tensor.detach().byte().float()  # Forma corretta (3, H, W) per il detector
             detections = self.detector_wrapper(det_input)
             
             if hasattr(self.target, "anonymize"):
@@ -142,6 +142,56 @@ class BenchmarkRunner:
             else:
                 pipeline_out_orig = self.target(img_orig_tensor.unsqueeze(0))
                 pipeline_out_adv = self.target(img_adv.unsqueeze(0))
+
+        def tensor_to_numpy(t):
+            if t.dim() == 4:
+                t = t.squeeze(0)
+            t = t.detach().cpu().permute(1, 2, 0).numpy()
+            t = np.clip(t, 0, 255).astype(np.uint8)
+            return t
+
+        orig_np = tensor_to_numpy(img_orig_tensor)
+        orig_pipeline_np = tensor_to_numpy(pipeline_out_orig)
+        adv_pipeline_np = tensor_to_numpy(pipeline_out_adv)
+
+        # 4. Estrae le coordinate del volto tramite il detector
+        if len(detections) > 0 and detections[0] is not None and len(detections[0]) > 0:
+            box = detections[0][0][:4].cpu().numpy().astype(int)
+            x1, y1, x2, y2 = box
+            h, w = orig_np.shape[:2]
+            x1, y1 = max(0, x1), max(0, y1)
+            x2, y2 = min(w, x2), min(h, y2)
+            
+            # Ritaglio mirato sul volto
+            face_orig = orig_np[y1:y2, x1:x2]
+            face_orig_pipe = orig_pipeline_np[y1:y2, x1:x2]
+            face_adv_pipe = adv_pipeline_np[y1:y2, x1:x2]
+        else:
+            face_orig, face_orig_pipe, face_adv_pipe = orig_np, orig_pipeline_np, adv_pipeline_np
+
+        # 5. Generazione del plot a 3 pannelli focalizzato sui volti
+        fig, axes = plt.subplots(1, 3, figsize=(12, 4))
+        
+        axes[0].imshow(face_orig)
+        axes[0].set_title(f"Volto Originale\n(Eps: {eps})")
+        axes[0].axis("off")
+        
+        axes[1].imshow(face_orig_pipe)
+        axes[1].set_title("DeepPrivacy2 (Baseline)\n[Volto Anon. / Sostituito]")
+        axes[1].axis("off")
+        
+        axes[2].imshow(face_adv_pipe)
+        axes[2].set_title("DeepPrivacy2 (Adversarial)\n[Evasione / Inalterato]")
+        axes[2].axis("off")
+        
+        plt.tight_layout()
+        if save_path:
+            os.makedirs(os.path.dirname(save_path), exist_ok=True)
+            plt.savefig(save_path, dpi=200, bbox_inches="tight")
+            print(f"Grafico dei volti salvato in: {save_path}")
+            
+        plt.show()
+        plt.close()
 
         def tensor_to_numpy(t):
             if t.dim() == 4:
