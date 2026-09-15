@@ -123,7 +123,7 @@ class BenchmarkRunner:
         eps = best_run['epsilon']
         image_name = best_run['image']
         
-        # Trova l'indice corrispondente nel dataset basandosi sul nome del file LFW
+        # Trova l'indice corrispondente nel dataset
         idx = 0
         found = False
         if hasattr(self.dataset, "image_paths"):
@@ -140,7 +140,6 @@ class BenchmarkRunner:
                     break
                     
         if not found:
-            print(f"[WARNING] Impossibile trovare '{image_name}' nel dataset per nome, uso il primo elemento.")
             idx = 0
             
         print(f"\nGenerazione visualizzazione ritagli di volto per: {image_name} | Epsilon={eps} (Indice dataset: {idx})")
@@ -152,27 +151,26 @@ class BenchmarkRunner:
         # 2. Esegue l'attacco PGD per ottenere l'immagine adversarial
         img_adv, _, _ = self.attack.perturb(img_orig_tensor=img_orig_tensor, epsilon=eps)
         
-        # 3. Rileva la bounding box e processa l'anonimizzazione
+        # 3. Chiamata corretta alla pipeline di anonimizzazione di DeepPrivacy2
         with torch.no_grad():
-            det_input = img_orig_tensor.detach().byte().float()
-            detections = self.detector_wrapper(det_input)
-            
             tensor_orig_clean = img_orig_tensor.detach().byte()
             tensor_adv_clean = img_adv.detach().byte()
             
-            synthesis_kwargs = {
-                "multi_modal_truncation": False,
-                "amp": True,
-                "truncation_value": 1.0
-            }
+            # Recuperiamo direttamente l'oggetto anonymizer principale per sfruttare il metodo nativo
+            anonymizer_obj = getattr(self.target, "anonymizer", getattr(self.target, "pipeline", self.target))
             
-            pipeline_obj = getattr(self.target, "pipeline", getattr(self.target, "anonymizer", self.target))
-            if hasattr(pipeline_obj, "anonymize"):
-                pipeline_out_orig = pipeline_obj.anonymize(tensor_orig_clean, **synthesis_kwargs)
-                pipeline_out_adv = pipeline_obj.anonymize(tensor_adv_clean, **synthesis_kwargs)
-            else:
-                pipeline_out_orig = pipeline_obj(tensor_orig_clean, **synthesis_kwargs)
-                pipeline_out_adv = pipeline_obj(tensor_adv_clean, **synthesis_kwargs)
+            # Se la pipeline accetta il batch o richiede un formato specifico (B, C, H, W)
+            if tensor_orig_clean.dim() == 3:
+                tensor_orig_clean = tensor_orig_clean.unsqueeze(0)
+                tensor_adv_clean = tensor_adv_clean.unsqueeze(0)
+                
+            # Esecuzione standard dell'anonimizzazione con DeepPrivacy2
+            # Assicurati che i parametri di generazione siano abilitati per StyleGAN
+            pipeline_out_orig = anonymizer_obj(tensor_orig_clean)
+            pipeline_out_adv = anonymizer_obj(tensor_adv_clean)
+            
+            # Estrazione delle detection pulite per ritagliare il volto nella zona corretta
+            detections = self.detector_wrapper(tensor_orig_clean.float())
 
         def tensor_to_numpy(t):
             if t.dim() == 4:
@@ -185,7 +183,7 @@ class BenchmarkRunner:
         orig_pipeline_np = tensor_to_numpy(pipeline_out_orig)
         adv_pipeline_np = tensor_to_numpy(pipeline_out_adv)
 
-        # 4. Estrazione sicura delle coordinate del volto convertendo l'iterabile in lista
+        # 4. Estrazione delle coordinate del volto
         box = None
         if len(detections) > 0 and detections[0] is not None:
             try:
@@ -202,18 +200,18 @@ class BenchmarkRunner:
         if box is not None:
             x1, y1, x2, y2 = box
             h, w = orig_np.shape[:2]
-            x1, y1 = max(0, x1), max(0, y1)
-            x2, y2 = min(w, x2), min(h, y2)
+            # Aggiungiamo un leggero margine (padding) per catturare bene il volto sintetizzato da StyleGAN
+            pad = int((y2 - y1) * 0.1)
+            x1, y1 = max(0, x1 - pad), max(0, y1 - pad)
+            x2, y2 = min(w, x2 + pad), min(h, y2 + pad)
             
-            # Ritaglio mirato sul volto
             face_orig = orig_np[y1:y2, x1:x2]
             face_orig_pipe = orig_pipeline_np[y1:y2, x1:x2]
             face_adv_pipe = adv_pipeline_np[y1:y2, x1:x2]
         else:
-            # Fallimento di sicurezza nel caso il detector non restituisca coordinate valide
             face_orig, face_orig_pipe, face_adv_pipe = orig_np, orig_pipeline_np, adv_pipeline_np
 
-        # 5. Generazione del plot a 3 pannelli focalizzato sui volti
+        # 5. Generazione del plot a 3 pannelli
         fig, axes = plt.subplots(1, 3, figsize=(12, 4))
         
         axes[0].imshow(face_orig)
@@ -221,7 +219,7 @@ class BenchmarkRunner:
         axes[0].axis("off")
         
         axes[1].imshow(face_orig_pipe)
-        axes[1].set_title("DeepPrivacy2 (Baseline)\n[Volto Anon. / Sostituito]")
+        axes[1].set_title("DeepPrivacy2 (Baseline)\n[Volto Sintetico StyleGAN]")
         axes[1].axis("off")
         
         axes[2].imshow(face_adv_pipe)
