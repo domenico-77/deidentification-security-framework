@@ -4,7 +4,7 @@ import types
 from pathlib import Path
 import torch
 
-# 0. MOCKING PREVENTIVO DI DENSEPOSE (Risolve il blocco corrente)
+# 0. MOCKING PREVENTIVO DI DENSEPOSE E DIPENDENZE OPZIONALI
 class DummyModule(types.ModuleType):
     def __getattr__(self, name):
         return DummyModule(name)
@@ -19,7 +19,6 @@ sys.modules["densepose.modeling.cse"] = DummyModule("densepose.modeling.cse")
 sys.modules["densepose.modeling.cse.utils"] = DummyModule("densepose.modeling.cse.utils")
 sys.modules["densepose.structures"] = DummyModule("densepose.structures")
 
-# Altri mock sicuri
 sys.modules["motpy"] = DummyModule("motpy")
 sys.modules["clip"] = DummyModule("clip")
 sys.modules["dp2.detection.cse_mask_face_detector"] = DummyModule("cse_mask")
@@ -31,7 +30,7 @@ fake_cse.from_E_to_vertex = lambda *args, **kwargs: None
 sys.modules["dp2.utils.cse"] = fake_cse
 
 
-# 1. Configurazione dei percorsi di base
+# 1. Configurazione dei percorsi di base su Kaggle
 repo_root = Path("/kaggle/input/datasets/domenicovicenti/deep-privacy2-repository").resolve()
 dp2_inner = repo_root / "deep_privacy2"
 models_dir = Path("/kaggle/input/datasets/domenicovicenti/deep-privacy2-models")
@@ -41,7 +40,7 @@ for p in [dp2_inner, repo_root]:
         sys.path.insert(0, str(p))
 
 
-# 2. Patch robusta per DSFD e StyleGAN basata sul tuo vecchio codice funzionante
+# 2. Patch robusta per DSFD e StyleGAN (Modalità 100% Offline)
 dsfd_model_path = models_dir / "WIDERFace_DSFD_RES152.pth"
 fdf_ckpt_path = models_dir / "stylegan_fdf128.ckpt"
 
@@ -75,7 +74,7 @@ except AttributeError:
     pass
 
 
-# 3. Classe Target che istanzia l'Anonymizer nativo
+# 3. Classe Target che istanzia l'Anonymizer nativo di DeepPrivacy2
 from targets.base_target import BaseDeidentificationTarget
 
 class DeepPrivacy2Target(BaseDeidentificationTarget):
@@ -85,13 +84,31 @@ class DeepPrivacy2Target(BaseDeidentificationTarget):
     def _load_pipeline(self):
         from tops.config import LazyConfig, instantiate
 
-        face_cfg_path = repo_root / "configs/anonymizers/face.py"
-        if not face_cfg_path.exists():
-            face_cfg_path = repo_root / "configs/anonymizers/face_fdf128.py"
-        if not face_cfg_path.exists():
-            matches = list(repo_root.glob("**/face.py")) + list(repo_root.glob("**/face_fdf128.py"))
-            if matches:
-                face_cfg_path = matches[0]
+        # Percorsi specifici e sicuri per le configurazioni degli anonymizers
+        possible_paths = [
+            repo_root / "configs" / "anonymizers" / "face.py",
+            repo_root / "configs" / "anonymizers" / "face_fdf128.py",
+            repo_root / "deep_privacy2" / "configs" / "anonymizers" / "face.py",
+            repo_root / "deep_privacy2" / "configs" / "anonymizers" / "face_fdf128.py"
+        ]
+
+        face_cfg_path = None
+        for p in possible_paths:
+            if p.exists():
+                face_cfg_path = p
+                break
+
+        # Fallback controllato evitando le cartelle di demo
+        if not face_cfg_path:
+            for p in repo_root.glob("**/face.py"):
+                if "gradio_demos" not in str(p) and "demos" not in str(p):
+                    face_cfg_path = p
+                    break
+
+        if not face_cfg_path or not face_cfg_path.exists():
+            raise FileNotFoundError(f"Impossibile trovare un file di configurazione valido per l'anonymizer in {repo_root}")
+
+        print(f"[INFO] Caricamento configurazione anonymizer da: {face_cfg_path}")
 
         orig_cwd = os.getcwd()
         try:
