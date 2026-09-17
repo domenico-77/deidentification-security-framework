@@ -5,6 +5,19 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import os
+import inspect
+
+# --- PATCH DI SICUREZZA PER PYTHON 3.12 + TORCHVISION ---
+# Intercetta i fallimenti di ispezione dei moduli (DummyModule) evitando il crash su os.path.splitext
+_old_getsourcefile = inspect.getsourcefile
+def _new_getsourcefile(object):
+    try:
+        return _old_getsourcefile(object)
+    except (TypeError, ValueError):
+        return None
+inspect.getsourcefile = _new_getsourcefile
+# --------------------------------------------------------
+
 import argparse
 import yaml
 import torch
