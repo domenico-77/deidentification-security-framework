@@ -1,7 +1,7 @@
 # De-identification Security Evaluation Framework
 
 Un framework modulare in PyTorch progettato per la valutazione della robustezza adversarial (PGD, FGSM, BIM, UAP) di pipelines di anonimizzazione e face de-identification.
-(Per ora è implementato e testato PGD su DeepPrivacy2)
+(Al momento è implementato e testato un PGD su Deeprivacy2)
 
 ## Struttura del Progetto
 - `attacks/`: Algoritmi di attacco adversarial basati sull'interfaccia comune astratta `BaseAttack` (include implementazioni come `PGDAttack`).
@@ -17,7 +17,14 @@ Un framework modulare in PyTorch progettato per la valutazione della robustezza 
 
 ## Guida all'Avvio su Kaggle
 
-Per replicare l'esperimento, eseguire il benchmark PGD su scala, generare i grafici di analisi e archiviare la baseline, puoi copiare ed eseguire la seguente sequenza di comandi all'interno delle celle di un notebook Kaggle:
+### 1. Preparazione delle Risorse (Dataset e Pesi dei Modelli)
+Prima di avviare il codice, assicurati di aver reso disponibili su Kaggle le risorse necessarie:
+- **Dataset delle immagini:** Il dataset LFW (es. `lfw-deepfunneled`) deve essere accessibile nell'ambiente Kaggle (solitamente sotto `/kaggle/input/datasets/...`).
+- **Pesi dei modelli (DeepPrivacy2):** I pesi pre-addestrati e la repository di DeepPrivacy2 devono essere caricati come dataset privato o pubblico su Kaggle (es. mappati in `/kaggle/input/datasets/domenicovicenti/deep-privacy2-repository`, `/kaggle/input/datasets/domenicovicenti/deep-privacy2-models/stylegan_fdf128.ckpt` e `/kaggle/input/datasets/domenicovicenti/deep-privacy2-models/WIDERFace_DSFD_RES152.pth`). 
+Lo script di setup penserà a collegarli correttamente alla struttura di esecuzione.
+
+### 2. Esecuzione del Pipeline di Test
+Copia ed esegui la seguente sequenza di comandi all'interno delle celle di un notebook Kaggle per clonare il repository, configurare l'ambiente, lanciare il benchmark (per ora PGD su Deeprivacy2), generare i grafici di analisi e archiviare la baseline:
 
 ```bash
 %cd /kaggle/working
