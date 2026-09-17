@@ -21,6 +21,7 @@ Un framework modulare in PyTorch progettato per la valutazione della robustezza 
 Prima di avviare il codice, assicurati di aver reso disponibili su Kaggle le risorse necessarie:
 - **Dataset delle immagini:** Il dataset LFW (es. `lfw-deepfunneled`) deve essere accessibile nell'ambiente Kaggle (sotto `/kaggle/input/datasets/...`).
 - **Pesi dei modelli:** I pesi delle reti neurali pre-addestrati e i repo dei face de-identifier devono essere caricati come dataset privato o pubblico su Kaggle (mappati in `/kaggle/input/datasets/domenicovicenti/deep-privacy2-models/stylegan_fdf128.ckpt` , `/kaggle/input/datasets/domenicovicenti/deep-privacy2-models/WIDERFace_DSFD_RES152.pth` e `/kaggle/input/datasets/domenicovicenti/deep-privacy2-repository`, ). 
+
 Lo script di setup penserà a collegarli correttamente alla struttura di esecuzione.
 
 ### 2. Esecuzione del Pipeline di Test
