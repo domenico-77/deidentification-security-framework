@@ -1,97 +1,98 @@
 import torch
+import torch.nn as nn
 import numpy as np
-from attacks.base_attack import BaseAttack
 
-class DeepFoolAttack(BaseAttack):
-    def __init__(self, detector=None, detector_wrapper=None, dsfd_net=None, mean_tensor=None, device: torch.device = None):
-        det = detector if detector is not None else detector_wrapper
-        super().__init__(detector=det, device=device)
-        
-        self.detector_wrapper = self.detector
-        self.dsfd_net = dsfd_net.to(self.device) if dsfd_net is not None else None
-        self.mean_tensor = mean_tensor.to(self.device) if mean_tensor is not None else None
+class DeepFoolAttack:
+    def __init__(self, detector_wrapper, dsfd_net, mean_tensor, device="cuda"):
+        """
+        Inizializza l'attacco DeepFool contro il detector DSFD di DeepPrivacy2.
+        """
+        self.detector_wrapper = detector_wrapper
+        self.dsfd_net = dsfd_net
+        self.mean_tensor = mean_tensor
+        self.device = device
 
-    def perturb(self, img_orig_tensor, max_iter=50, overshoot=0.02):
+    def perturb(self, img_orig_tensor, max_iter=50, overshoot=0.02, **kwargs):
         """
         Esegue l'attacco DeepFool per trovare la perturbazione minima necessaria
-        a evadere il rilevatore DSFD.
+        a evadere il rilevatore DSFD. Accetta **kwargs per compatibilità con il runner.
         """
-        img_adv = img_orig_tensor.clone().detach().to(self.device).float()
-        img_orig = img_orig_tensor.clone().detach().to(self.device).float()
+        # Assicura che il tensore sia sul device corretto e abilitato ai gradienti
+        x = img_orig_tensor.clone().detach().to(self.device).float()
+        x.requires_grad = True
         
+        original_image = x.clone()
+        
+        # Copia dell'immagine originale per il calcolo delle metriche finali
+        x_orig_np = img_orig_tensor.detach().cpu().numpy()
+
         success = False
-        success_iteration = None
-        
-        # Verifica preliminare: se già non rileva nulla, l'attacco è trivialmente riuscito
-        with torch.no_grad():
-            initial_det = self.detector((img_adv.unsqueeze(0)).byte().float())
-            if not initial_det or initial_det[0] is None or len(initial_det[0]) == 0:
-                return img_adv, True, 0
+        succ_iter = 0
 
         for i in range(max_iter):
-            img_adv.requires_grad_(True)
+            # Normalizzazione attesa dal detector DSFD
+            x_norm = x - self.mean_tensor
             
-            # 1. Normalizzazione per DSFD
-            input_net = img_adv.unsqueeze(0) - self.mean_tensor
+            # Forward pass attraverso la rete DSFD
+            # Nota: adattato in base alla struttura dei tensori di output di DSFD
+            outputs = self.dsfd_net(x_norm)
             
-            # 2. Forward pass
-            net_out = self.dsfd_net(input_net, 0.0, 0.0)
-            
-            # Costruzione di una loss scalare basata sui logit dei volti rilevati
-            loss = torch.tensor(0.0, device=self.device, requires_grad=True)
-            if isinstance(net_out, (list, tuple)):
-                for t in net_out:
-                    if isinstance(t, torch.Tensor) and t.ndim >= 2 and t.shape[-1] == 2:
-                        face_logits = t[..., 1]
-                        bg_logits = t[..., 0]
-                        loss = loss + torch.relu(face_logits - bg_logits).sum()
-                    elif isinstance(t, torch.Tensor):
-                        loss = loss + torch.relu(t).sum()
-            elif isinstance(net_out, torch.Tensor):
-                loss = loss + torch.relu(net_out).sum()
+            # Assumiamo di prendere il punteggio di confidenza della prima classe/detection o il logit massimo
+            if isinstance(outputs, (list, tuple)):
+                # Prende ad esempio la classificazione o il punteggio principale
+                score = outputs[0].sum()
+            else:
+                score = outputs.sum()
 
-            if loss.item() == 0.0:
+            # Se il punteggio scende sotto una determinata soglia o non rileva più volti, consideriamo l'attacco riuscito
+            # (Verifica basata sull'evasione del detector)
+            if score.item() < 0.0:  # Condizione di esempio per l'evasione
                 success = True
-                success_iteration = i
+                succ_iter = i + 1
                 break
 
+            # Calcolo dei gradienti rispetto all'input
             self.dsfd_net.zero_grad()
-            if img_adv.grad is not None:
-                img_adv.grad.zero_()
+            if x.grad is not None:
+                x.grad.zero_()
                 
-            loss.backward()
-            
-            if img_adv.grad is None or torch.abs(img_adv.grad).sum().item() == 0:
-                break
+            score.backward()
+            grad = x.grad.data.clone()
 
-            grad = img_adv.grad.detach()
-            
-            # Calcolo del passo DeepFool basato sulla linearizzazione
+            # Semplificazione della logica iterativa di DeepFool per il gradiente del detector
             w = grad
-            w_norm = torch.norm(w.flatten())
-            if w_norm == 0:
+            f_x = score
+
+            if torch.norm(w) == 0:
                 break
-                
-            r = (abs(loss.item()) / (w_norm ** 2)) * w
+
+            # Calcolo della perturbazione minima (formula standard di DeepFool)
+            pert = (torch.abs(f_x) / (torch.norm(w) ** 2 + 1e-8)) * w * (1 + overshoot)
             
             with torch.no_grad():
-                # Applicazione del passo con overshoot per superare il confine
-                img_adv = img_adv + (1 + overshoot) * r
-                # Clamp sui valori validi dell'immagine [0, 255]
-                img_adv = torch.clamp(img_adv, min=0.0, max=255.0).detach()
+                x += pert
+                # Proiezione opzionale nei limiti validi dei pixel (es. [0, 255] o [-1, 1])
+                x = torch.clamp(x, 0, 255)
+                x.requires_grad = True
 
-            # 3. Controllo effettivo di evasione tramite il detector wrapper
-            with torch.no_grad():
-                detections = self.detector(img_adv.unsqueeze(0).byte().float())
-                chk_faces = len(detections[0]) if (len(detections) > 0 and detections[0] is not None) else 0
-                
-                if chk_faces == 0:
-                    success = True
-                    success_iteration = i
-                    break
+            succ_iter = i + 1
 
-        return img_adv, success, success_iteration
+        img_adv = x.detach()
+        
+        # Calcolo metriche di supporto (Linf, L2, MSE, PSNR)
+        diff = img_adv - original_image
+        l_inf = torch.max(torch.abs(diff)).item()
+        l2 = torch.norm(diff).item()
+        mse = torch.mean(diff ** 2).item()
+        psnr = 20 * np.log10(255.0 / np.sqrt(mse)) if mse > 0 else float('inf')
 
-    def attack(self, image_tensor: torch.Tensor, **kwargs) -> torch.Tensor:
-        img_adv, _, _ = self.perturb(image_tensor, **kwargs)
-        return img_adv
+        metrics = {
+            "success": success,
+            "success_iteration": succ_iter,
+            "l_inf": l_inf,
+            "l2": l2,
+            "mse": mse,
+            "psnr": psnr
+        }
+
+        return img_adv, success, succ_iter
