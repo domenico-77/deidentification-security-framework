@@ -1,7 +1,9 @@
 import torch
+from attacks.base_attack import BaseAttack
 
-class PGDAttack:
+class PGDAttack(BaseAttack):
     def __init__(self, detector_wrapper, dsfd_net, mean_tensor, device="cuda"):
+        super().__init__()
         self.detector_wrapper = detector_wrapper
         self.dsfd_net = dsfd_net
         self.mean_tensor = mean_tensor
@@ -67,3 +69,9 @@ class PGDAttack:
                     break
 
         return img_adv, success, success_iteration
+
+    def attack(self, img_orig_tensor, epsilon, **kwargs):
+        """
+        Metodo standard richiesto dalla classe base (alias per perturb).
+        """
+        return self.perturb(img_orig_tensor, epsilon, **kwargs)
