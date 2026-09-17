@@ -12,7 +12,7 @@ import torch
 from data_loaders.lfw import LFWDataset
 from targets.deeprivacy2 import DeepPrivacy2Target
 from detectors.dsfd import DSFDDetector
-from attacks.deepfool_attack import DeepFoolAttack
+from attacks.deepfool import DeepFoolAttack
 from benchmark.benchmark_runner import BenchmarkRunner
 
 
