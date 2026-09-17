@@ -2,10 +2,14 @@ import torch
 from attacks.base_attack import BaseAttack
 
 class PGDAttack(BaseAttack):
-    def __init__(self, detector, dsfd_net, mean_tensor, device: torch.device = None):
-        super().__init__(detector=detector, device=device)
-        self.dsfd_net = dsfd_net.to(self.device)
-        self.mean_tensor = mean_tensor.to(self.device)
+    def __init__(self, detector=None, detector_wrapper=None, dsfd_net=None, mean_tensor=None, device: torch.device = None):
+        # Accetta sia 'detector' che 'detector_wrapper' per massima compatibilità
+        det = detector if detector is not None else detector_wrapper
+        super().__init__(detector=det, device=device)
+        
+        self.detector_wrapper = self.detector
+        self.dsfd_net = dsfd_net.to(self.device) if dsfd_net is not None else None
+        self.mean_tensor = mean_tensor.to(self.device) if mean_tensor is not None else None
 
     def perturb(self, img_orig_tensor, epsilon, alpha=2.0, iterations=150):
         """
@@ -46,7 +50,7 @@ class PGDAttack(BaseAttack):
             if img_adv.grad is None or torch.abs(img_adv.grad).sum().item() == 0:
                 break
 
-            grad_sign = img_adv.grad.sign()
+            grad_sign = img_adv.grad.grad.sign() if hasattr(img_adv.grad, "grad") else img_adv.grad.sign()
 
             # 4. Aggiornamento PGD e Proiezione L-inf su scala [0, 255]
             with torch.no_grad():
