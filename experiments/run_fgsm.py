@@ -5,24 +5,22 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import os
-import inspect
 
-# --- PATCH DI SICUREZZA ESTESA PER PYTHON 3.12 + TORCH ---
-_old_getsourcefile = inspect.getsourcefile
-def _new_getsourcefile(object):
-    try:
-        return _old_getsourcefile(object)
-    except (TypeError, ValueError):
-        return None
-inspect.getsourcefile = _new_getsourcefile
-
-_old_abspath = os.path.abspath
-def _safe_abspath(path):
-    if not isinstance(path, (str, bytes, os.PathLike)):
-        path = str(path) if path is not None else ""
-    return _old_abspath(path)
-os.path.abspath = _safe_abspath
-# --------------------------------------------------------
+# --- PATCH MIRATA PER PYTORCH + PYTHON 3.12 ---
+# Intercetta esclusivamente il meccanismo di tracciamento sorgente di PyTorch
+# evitando di toccare l'importlib o i path di sistema di Python.
+try:
+    import torch._library.utils
+    _old_get_source = torch._library.utils.get_source
+    def _safe_get_source(stacklevel=1):
+        try:
+            return _old_get_source(stacklevel + 1)
+        except Exception:
+            return "<unknown>"
+    torch._library.utils.get_source = _safe_get_source
+except Exception:
+    pass
+# ---------------------------------------------
 
 import argparse
 import yaml
