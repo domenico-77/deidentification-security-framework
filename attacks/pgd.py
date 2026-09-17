@@ -3,7 +3,6 @@ from attacks.base_attack import BaseAttack
 
 class PGDAttack(BaseAttack):
     def __init__(self, detector=None, detector_wrapper=None, dsfd_net=None, mean_tensor=None, device: torch.device = None):
-        # Accetta sia 'detector' che 'detector_wrapper' per massima compatibilità
         det = detector if detector is not None else detector_wrapper
         super().__init__(detector=det, device=device)
         
@@ -12,10 +11,6 @@ class PGDAttack(BaseAttack):
         self.mean_tensor = mean_tensor.to(self.device) if mean_tensor is not None else None
 
     def perturb(self, img_orig_tensor, epsilon, alpha=2.0, iterations=150):
-        """
-        Esegue l'attacco iterativo PGD mirato a eludere il rilevatore DSFD.
-        Restituisce: (img_adv, success, success_iteration)
-        """
         img_adv = img_orig_tensor.clone().detach().to(self.device)
         img_orig_tensor = img_orig_tensor.to(self.device)
         success = False
@@ -30,27 +25,30 @@ class PGDAttack(BaseAttack):
             # 2. Forward pass
             net_out = self.dsfd_net(input_net, 0.0, 0.0)
             
-            # 3. Calcolo Loss di evasione
-            loss = 0.0
+            # 3. Calcolo Loss di evasione (inizializzata come tensore PyTorch)
+            loss = torch.tensor(0.0, device=self.device, requires_grad=True)
             if isinstance(net_out, (list, tuple)):
                 for t in net_out:
-                    if isinstance(t, torch.Tensor) and t.requires_grad:
+                    if isinstance(t, torch.Tensor):
                         if t.ndim >= 2 and t.shape[-1] == 2:
                             face_logits = t[..., 1]
                             bg_logits = t[..., 0]
                             loss = loss + torch.relu(face_logits - bg_logits).sum()
                         else:
                             loss = loss + torch.relu(t).sum()
-            elif isinstance(net_out, torch.Tensor) and net_out.requires_grad:
-                loss = torch.relu(net_out).sum()
+            elif isinstance(net_out, torch.Tensor):
+                loss = loss + torch.relu(net_out).sum()
 
             self.dsfd_net.zero_grad()
+            if img_adv.grad is not None:
+                img_adv.grad.zero_()
+                
             loss.backward()
 
             if img_adv.grad is None or torch.abs(img_adv.grad).sum().item() == 0:
                 break
 
-            grad_sign = img_adv.grad.grad.sign() if hasattr(img_adv.grad, "grad") else img_adv.grad.sign()
+            grad_sign = img_adv.grad.sign()
 
             # 4. Aggiornamento PGD e Proiezione L-inf su scala [0, 255]
             with torch.no_grad():
@@ -75,9 +73,5 @@ class PGDAttack(BaseAttack):
         return img_adv, success, success_iteration
 
     def attack(self, image_tensor: torch.Tensor, epsilon=8.0, **kwargs) -> torch.Tensor:
-        """
-        Implementazione del metodo astratto richiesto da BaseAttack.
-        Restituisce direttamente il tensore adversarial.
-        """
         img_adv, _, _ = self.perturb(image_tensor, epsilon=epsilon, **kwargs)
         return img_adv
