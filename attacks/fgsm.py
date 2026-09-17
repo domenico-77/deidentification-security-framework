@@ -2,71 +2,71 @@ import torch
 from attacks.base_attack import BaseAttack
 
 class FGSMAttack(BaseAttack):
-    """Fast Gradient Sign Method (FGSM) Single-step attack."""
+    def __init__(self, detector, dsfd_net, mean_tensor, device: torch.device = None):
+        super().__init__(detector=detector, device=device)
+        self.dsfd_net = dsfd_net.to(self.device)
+        self.mean_tensor = mean_tensor.to(self.device)
 
-    def __init__(self, detector_wrapper, dsfd_net, mean_tensor, device="cuda"):
-        super().__init__()
-        self.detector_wrapper = detector_wrapper
-        self.dsfd_net = dsfd_net
-        self.mean_tensor = mean_tensor
-        self.device = device
-
-    def compute_adversarial_loss(self, img_tensor):
-        """Calcola la loss basata sulla risposta del detector DSFD."""
-        # Normalizzazione attesa dal detector DSFD di DeepPrivacy2
-        normalized_img = img_tensor - self.mean_tensor
+    def perturb(self, img_orig_tensor, epsilon):
+        """
+        Esegue l'attacco one-step FGSM (Fast Gradient Sign Method).
+        Restituisce: (img_adv, success, success_iteration)
+        """
+        img_adv = img_orig_tensor.clone().detach().to(self.device)
+        img_orig_tensor = img_orig_tensor.to(self.device)
         
-        # Esecuzione del forward pass sul detector in modalità training per preservare il grafo dei gradienti
-        # Nota: a seconda di come è esposta la rete DSFD nel tuo wrapper, potresti chiamare direttamente self.dsfd_net
-        detections = self.dsfd_net(normalized_img)
+        img_adv.requires_grad_(True)
         
-        # La loss punta a minimizzare la confidenza o il numero di oggetti rilevati
-        # Una loss comune per l'evasione del detector è la somma dei punteggi di confidenza rilevati
+        # 1. Input normalizzato per DSFD
+        input_net = img_adv.unsqueeze(0) - self.mean_tensor
+        
+        # 2. Forward pass
+        net_out = self.dsfd_net(input_net, 0.0, 0.0)
+        
+        # 3. Calcolo Loss di evasione
         loss = 0.0
-        if isinstance(detections, (list, tuple)):
-            for det in detections:
-                if det is not None and len(det) > 0:
-                    # Somma delle confidenze delle bbox rilevate
-                    loss = loss + det[:, 4].sum()
-        elif torch.is_tensor(detections) and detections.numel() > 0:
-            loss = detections[:, 4].sum()
-        else:
-            # Fallimento fittizio se non ci sono tensor lossabili, usa una norma di appoggio o dummy loss
-            loss = torch.sum(img_tensor * 0.0)
+        if isinstance(net_out, (list, tuple)):
+            for t in net_out:
+                if isinstance(t, torch.Tensor) and t.requires_grad:
+                    if t.ndim >= 2 and t.shape[-1] == 2:
+                        face_logits = t[..., 1]
+                        bg_logits = t[..., 0]
+                        loss = loss + torch.relu(face_logits - bg_logits).sum()
+                    else:
+                        loss = loss + torch.relu(t).sum()
+        elif isinstance(net_out, torch.Tensor) and net_out.requires_grad:
+            loss = torch.relu(net_out).sum()
+
+        self.dsfd_net.zero_grad()
+        loss.backward()
+
+        success = False
+        success_iteration = 1
+
+        if img_adv.grad is not None and torch.abs(img_adv.grad).sum().item() > 0:
+            grad_sign = img_adv.grad.sign()
+            with torch.no_grad():
+                # FGSM step singolo vincolato nel ballo L-infinito (epsilon)
+                img_adv = img_adv - epsilon * grad_sign
+                eta = img_adv - img_orig_tensor
+                eta = torch.clamp(eta, min=-epsilon, max=epsilon)
+                img_adv = torch.clamp(img_orig_tensor + eta, min=0.0, max=255.0).detach()
+                
+            # 4. Check Evasione
+            detector_input = img_adv.detach().byte().float()
+            with torch.no_grad():
+                detections = self.detector(detector_input)
             
-        return loss
+            chk_faces = len(detections[0]) if (len(detections) > 0 and detections[0] is not None) else 0
+            if chk_faces == 0:
+                success = True
 
-    def perturb(self, img_orig_tensor: torch.Tensor, epsilon: float = 32.0):
+        return img_adv, success, success_iteration
+
+    def attack(self, image_tensor: torch.Tensor, epsilon=8.0, **kwargs) -> torch.Tensor:
         """
-        Esegue l'attacco FGSM in un unico step.
-        Restituisce: (img_adv, success_bool, iterations_count)
+        Implementazione del metodo astratto richiesto da BaseAttack.
+        Restituisce direttamente il tensore adversarial.
         """
-        if img_orig_tensor.dim() == 3:
-            orig_tensor = img_orig_tensor.unsqueeze(0).to(self.device).float().clone()
-        else:
-            orig_tensor = img_orig_tensor.to(self.device).float().clone()
-
-        orig_tensor.requires_grad = True
-        
-        # Calcolo della loss
-        loss = self.compute_adversarial_loss(orig_tensor)
-
-        if loss is not None and torch.is_tensor(loss) and loss.requires_grad:
-            loss.backward()
-            if orig_tensor.grad is not None:
-                grad_sign = orig_tensor.grad.sign()
-                # Sottrazione per minimizzare la confidenza del detector (attacco d'evasione)
-                adv_tensor = orig_tensor - epsilon * grad_sign
-                # Clamping nei limiti validi dei pixel [0, 255]
-                adv_tensor = torch.clamp(adv_tensor, 0.0, 255.0)
-                
-                # Verifica rapida se ha eluso il detector
-                with torch.no_grad():
-                    eval_input = adv_tensor.byte().float()
-                    final_dets = self.detector_wrapper(eval_input)
-                    success = (len(final_dets) == 0 or final_dets[0] is None or len(final_dets[0]) == 0)
-                
-                return adv_tensor.squeeze(0), success, 1
-
-        # Fallback se il gradiente non è disponibile
-        return orig_tensor.squeeze(0), False, 1
+        img_adv, _, _ = self.perturb(image_tensor, epsilon=epsilon, **kwargs)
+        return img_adv
