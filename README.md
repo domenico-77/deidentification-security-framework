@@ -30,13 +30,10 @@ Copia ed esegui la seguente sequenza di comandi all'interno delle celle di un no
 ```bash
 %cd /kaggle/working
 !rm -rf deidentification-security-framework
-!git clone [https://github.com/domenico-77/deidentification-security-framework.git](https://github.com/domenico-77/deidentification-security-framework.git)
+!git clone https://github.com/domenico-77/deidentification-security-framework.git
 %cd deidentification-security-framework
 !python kaggle/setup.py
 !PYTHONPATH=. python experiments/run_nomeattacco.py --dataset_path /kaggle/input/datasets/jessicali9530/lfw-dataset/lfw-deepfunneled/lfw-deepfunneled
 
 !python experiments/plot_results.py
-# Sposta la cartella attuale rinominandola come baseline PGD
-!mv results results_baseline_pgd
-# Crea una nuova cartella results vuota per i prossimi test
-!mkdir results
+# Per la generazione dei grafici:asr_vs_epsilon.png psnr_vs_epsilon.png l2_distribution.png iterations_vs_epsilon.png pipeline_mse_vs_epsilon.png
