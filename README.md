@@ -25,7 +25,7 @@ Prima di avviare il codice, assicurati di aver reso disponibili su Kaggle le ris
 Lo script di setup penserà a collegarli correttamente alla struttura di esecuzione.
 
 ### 2. Esecuzione del Pipeline di Test
-Copia ed esegui la seguente sequenza di comandi all'interno delle celle di un notebook Kaggle per clonare il repository, configurare l'ambiente, lanciare il benchmark (per ora PGD su Deeprivacy2), generare i grafici di analisi e archiviare la baseline:
+Copia ed esegui la seguente sequenza di comandi all'interno delle celle di un notebook Kaggle per clonare il repository, configurare l'ambiente, lanciare il benchmark (per ora FGSM e PGD su Deeprivacy2), generare i grafici di analisi e archiviare la baseline:
 
 ```bash
 %cd /kaggle/working
@@ -33,7 +33,7 @@ Copia ed esegui la seguente sequenza di comandi all'interno delle celle di un no
 !git clone [https://github.com/domenico-77/deidentification-security-framework.git](https://github.com/domenico-77/deidentification-security-framework.git)
 %cd deidentification-security-framework
 !python kaggle/setup.py
-!PYTHONPATH=. python experiments/run_pgd.py --dataset_path /kaggle/input/datasets/jessicali9530/lfw-dataset/lfw-deepfunneled/lfw-deepfunneled
+!PYTHONPATH=. python experiments/run_nomeattacco.py --dataset_path /kaggle/input/datasets/jessicali9530/lfw-dataset/lfw-deepfunneled/lfw-deepfunneled
 
 !python experiments/plot_results.py
 # Sposta la cartella attuale rinominandola come baseline PGD
