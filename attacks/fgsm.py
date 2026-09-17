@@ -24,13 +24,11 @@ class FGSMAttack(BaseAttack):
         net_out = self.dsfd_net(input_net, 0.0, 0.0)
         
         # 3. Loss di massimizzazione mirata (Targeted Logit Inversion)
-        # Vogliamo massimizzare il logit dello sfondo (t[..., 0]) e minimizzare quello della faccia (t[..., 1])
         loss = torch.tensor(0.0, device=self.device, requires_grad=True)
         if isinstance(net_out, (list, tuple)):
             for t in net_out:
                 if isinstance(t, torch.Tensor):
                     if t.ndim >= 2 and t.shape[-1] == 2:
-                        # Differenza direzionale netta orientata all'inganno del classificatore
                         loss = loss + (t[..., 1] - t[..., 0]).sum()
                     else:
                         loss = loss + t.sum()
@@ -42,16 +40,13 @@ class FGSMAttack(BaseAttack):
         loss.backward()
 
         success = False
-        success_iteration = 1
 
         # 5. Applicazione del passo singolo massimizzato (FGSM Puro)
         if img_adv.grad is not None and torch.abs(img_adv.grad).sum().item() > 0:
             grad_sign = img_adv.grad.sign()
             with torch.no_grad():
-                # Balzo secco di ampiezza epsilon nella direzione del gradiente
                 img_adv = img_adv + epsilon * grad_sign
                 
-                # Vincolo di clipping L-infinito per rispettare il budget di epsilon
                 eta = img_adv - img_orig_tensor
                 eta = torch.clamp(eta, min=-epsilon, max=epsilon)
                 img_adv = torch.clamp(img_orig_tensor + eta, min=0.0, max=255.0).detach()
@@ -64,6 +59,9 @@ class FGSMAttack(BaseAttack):
         chk_faces = len(detections[0]) if (len(detections) > 0 and detections[0] is not None) else 0
         if chk_faces == 0:
             success = True
+
+        # Assegnazione coerente: 1 se ha avuto successo al primo colpo, None se ha fallito
+        success_iteration = 1 if success else None
 
         return img_adv, success, success_iteration
 
