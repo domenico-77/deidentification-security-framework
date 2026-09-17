@@ -5,22 +5,28 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import os
+import inspect
 
-# --- PATCH MIRATA PER PYTORCH + PYTHON 3.12 ---
-# Intercetta esclusivamente il meccanismo di tracciamento sorgente di PyTorch
-# evitando di toccare l'importlib o i path di sistema di Python.
-try:
-    import torch._library.utils
-    _old_get_source = torch._library.utils.get_source
-    def _safe_get_source(stacklevel=1):
-        try:
-            return _old_get_source(stacklevel + 1)
-        except Exception:
-            return "<unknown>"
-    torch._library.utils.get_source = _safe_get_source
-except Exception:
-    pass
-# ---------------------------------------------
+# --- PATCH DI SICUREZZA ROBUSTA PER INSPECT (PYTHON 3.12) ---
+_old_getfile = inspect.getfile
+def _safe_getfile(object):
+    try:
+        f = _old_getfile(object)
+        if not isinstance(f, (str, bytes, os.PathLike)):
+            return __file__
+        return f
+    except Exception:
+        return __file__
+inspect.getfile = _safe_getfile
+
+_old_getsourcefile = inspect.getsourcefile
+def _safe_getsourcefile(object):
+    try:
+        return _old_getsourcefile(object)
+    except Exception:
+        return None
+inspect.getsourcefile = _safe_getsourcefile
+# -------------------------------------------------------------
 
 import argparse
 import yaml
