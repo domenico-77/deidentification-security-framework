@@ -1,17 +1,21 @@
 import os
+import argparse
 import torch
 import warnings
-from torch.utils.data import DataLoader
-from torchvision import transforms
 
 from targets.deeprivacy2 import DeepPrivacy2Target
 from attacks.fgsm import FGSMAttack
 from benchmark.benchmark_runner import BenchmarkRunner
-from dataset.lfw import LFWDataset  # Modifica con il percorso del tuo loader LFW se differente
+from data_loaders.lfw import LFWDataset
 
 warnings.filterwarnings("ignore")
 
 def main():
+    parser = argparse.ArgumentParser(description="Run FGSM Benchmark against DeepPrivacy2")
+    parser.add_argument("--config", type=str, default="configs/pgd.yaml")
+    parser.add_argument("--dataset_path", type=str, required=True)
+    args = parser.parse_args()
+
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Dispositivo di esecuzione: {device}")
 
@@ -30,7 +34,7 @@ def main():
 
     # 3. Caricamento del dataset LFW
     print("Caricamento del dataset LFW...")
-    dataset = LFWDataset(root_dir="/kaggle/input/lfw-dataset/lfw_funneled") # Sostituisci con il tuo path dataset reale
+    dataset = LFWDataset(root_dir=args.dataset_path)
 
     # 4. Configurazione del BenchmarkRunner
     runner = BenchmarkRunner(
@@ -40,11 +44,11 @@ def main():
         device=device
     )
 
-    # 5. Esecuzione del benchmark (es. test con epsilon fissi)
+    # 5. Esecuzione del benchmark
     output_dir = "./results_fgsm"
-    df = runner.run_benchmark(
+    runner.run_benchmark(
         epsilons=[2.0, 4.0, 8.0, 16.0, 32.0],
-        num_samples=50,
+        num_samples=5,
         output_dir=output_dir
     )
 
@@ -52,6 +56,8 @@ def main():
     csv_path = os.path.join(output_dir, "benchmark_results.csv")
     plot_path = os.path.join(output_dir, "fgsm_comparison_plot.png")
     runner.visualize_best_attack(csv_path=csv_path, save_path=plot_path)
+
+    print(f"Benchmark FGSM completato con successo. Risultati salvati in {output_dir}")
 
 if __name__ == "__main__":
     main()
