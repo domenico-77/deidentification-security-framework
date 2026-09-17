@@ -7,8 +7,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import os
 import inspect
 
-# --- PATCH DI SICUREZZA PER PYTHON 3.12 + TORCHVISION ---
-# Intercetta i fallimenti di ispezione dei moduli (DummyModule) evitando il crash su os.path.splitext
+# --- PATCH DI SICUREZZA ESTESA PER PYTHON 3.12 + TORCH ---
 _old_getsourcefile = inspect.getsourcefile
 def _new_getsourcefile(object):
     try:
@@ -16,6 +15,13 @@ def _new_getsourcefile(object):
     except (TypeError, ValueError):
         return None
 inspect.getsourcefile = _new_getsourcefile
+
+_old_abspath = os.path.abspath
+def _safe_abspath(path):
+    if not isinstance(path, (str, bytes, os.PathLike)):
+        path = str(path) if path is not None else ""
+    return _old_abspath(path)
+os.path.abspath = _safe_abspath
 # --------------------------------------------------------
 
 import argparse
