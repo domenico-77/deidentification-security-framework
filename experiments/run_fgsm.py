@@ -1,5 +1,24 @@
+import sys
+from pathlib import Path
+
+# Aggiunge la root del progetto a sys.path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 import os
+import inspect
+
+# --- MONKEYPATCH COMPATIBILITÀ PYTHON 3.12 ---
+# Evita il crash con DummyModule durante l'ispezione dei moduli in torchvision/face_detection
+_orig_splitext = os.path.splitext
+def _safe_splitext(p):
+    if not isinstance(p, (str, bytes, os.PathLike)):
+        p = str(p) if p is not None else ""
+    return _orig_splitext(p)
+os.path.splitext = _safe_splitext
+# ---------------------------------------------
+
 import argparse
+import yaml
 import torch
 import warnings
 
@@ -19,7 +38,7 @@ def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Dispositivo di esecuzione: {device}")
 
-    # 1. Inizializzazione del Target (DeepPrivacy2)
+    # 1. Inizializzazione del Target
     print("Caricamento del target DeepPrivacy2...")
     target = DeepPrivacy2Target(device=device)
 
@@ -52,7 +71,7 @@ def main():
         output_dir=output_dir
     )
 
-    # 6. Generazione del grafico di visualizzazione del miglior attacco riuscito
+    # 6. Generazione del grafico di visualizzazione
     csv_path = os.path.join(output_dir, "benchmark_results.csv")
     plot_path = os.path.join(output_dir, "fgsm_comparison_plot.png")
     runner.visualize_best_attack(csv_path=csv_path, save_path=plot_path)
