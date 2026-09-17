@@ -19,7 +19,7 @@ Un framework modulare in PyTorch progettato per la valutazione della robustezza 
 
 ### 1. Preparazione delle Risorse (Dataset e Pesi dei Modelli)
 Prima di avviare il codice, assicurati di aver reso disponibili su Kaggle le risorse necessarie:
-- **Dataset delle immagini:** Il dataset LFW (es. `lfw-deepfunneled`) deve essere accessibile nell'ambiente Kaggle (solitamente sotto `/kaggle/input/datasets/...`).
+- **Dataset delle immagini:** Il dataset LFW (es. `lfw-deepfunneled`) deve essere accessibile nell'ambiente Kaggle (sotto `/kaggle/input/datasets/...`).
 - **Pesi dei modelli (DeepPrivacy2):** I pesi pre-addestrati e i repo dei face de-identifier devono essere caricati come dataset privato o pubblico su Kaggle (es. mappati in `/kaggle/input/datasets/domenicovicenti/deep-privacy2-repository`, `/kaggle/input/datasets/domenicovicenti/deep-privacy2-models/stylegan_fdf128.ckpt` e `/kaggle/input/datasets/domenicovicenti/deep-privacy2-models/WIDERFace_DSFD_RES152.pth`). 
 Lo script di setup penserà a collegarli correttamente alla struttura di esecuzione.
 
