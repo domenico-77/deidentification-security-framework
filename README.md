@@ -1,7 +1,7 @@
 # De-identification Security Evaluation Framework
 
 Un framework modulare in PyTorch progettato per la valutazione della robustezza adversarial (FGSM, PGD, DEEPFOOL, C&W, UAP) di pipelines di anonimizzazione e face de-identification.
-(Al momento è implementato e testato un PGD su Deeprivacy2)
+(Al momento sono implementati e testati FGSM e PGD su Deeprivacy2 come modello di anonimizzazione e face de-identification)
 
 ## Struttura del Progetto
 - `attacks/`: Algoritmi di attacco adversarial basati sull'interfaccia comune astratta `BaseAttack` (include implementazioni come `PGDAttack`).
