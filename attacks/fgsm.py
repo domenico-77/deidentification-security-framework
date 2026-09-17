@@ -22,7 +22,7 @@ class FGSMAttack(BaseAttack):
         # 2. Forward pass
         net_out = self.dsfd_net(input_net, 0.0, 0.0)
         
-        # 3. Calcolo Loss di evasione (tensore PyTorch)
+        # 3. Loss di massimizzazione (vogliamo massimizzare i logit di faccia per mandare in confusione o azzerare la confidenza)
         loss = torch.tensor(0.0, device=self.device, requires_grad=True)
         if isinstance(net_out, (list, tuple)):
             for t in net_out:
@@ -30,11 +30,12 @@ class FGSMAttack(BaseAttack):
                     if t.ndim >= 2 and t.shape[-1] == 2:
                         face_logits = t[..., 1]
                         bg_logits = t[..., 0]
-                        loss = loss + torch.relu(face_logits - bg_logits).sum()
+                        # Spingiamo i logit della faccia a confondere il detector
+                        loss = loss + torch.abs(face_logits - bg_logits).sum()
                     else:
-                        loss = loss + torch.relu(t).sum()
+                        loss = loss + torch.abs(t).sum()
         elif isinstance(net_out, torch.Tensor):
-            loss = loss + torch.relu(net_out).sum()
+            loss = loss + torch.abs(net_out).sum()
 
         self.dsfd_net.zero_grad()
         loss.backward()
@@ -43,9 +44,12 @@ class FGSMAttack(BaseAttack):
         success_iteration = 1
 
         if img_adv.grad is not None and torch.abs(img_adv.grad).sum().item() > 0:
+            # Con FGSM mirato all'evasione, proviamo a seguire la direzione del segno del gradiente
             grad_sign = img_adv.grad.sign()
             with torch.no_grad():
-                img_adv = img_adv - epsilon * grad_sign
+                # Nota: a seconda della formulazione della loss, a volte si somma o si sottrae. 
+                # Proviamo il segno standard orientato all'evasione.
+                img_adv = img_adv + epsilon * grad_sign
                 eta = img_adv - img_orig_tensor
                 eta = torch.clamp(eta, min=-epsilon, max=epsilon)
                 img_adv = torch.clamp(img_orig_tensor + eta, min=0.0, max=255.0).detach()
