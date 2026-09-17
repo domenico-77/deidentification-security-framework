@@ -5,18 +5,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import os
-import inspect
-
-# --- MONKEYPATCH COMPATIBILITÀ PYTHON 3.12 ---
-# Evita il crash con DummyModule durante l'ispezione dei moduli in torchvision/face_detection
-_orig_splitext = os.path.splitext
-def _safe_splitext(p):
-    if not isinstance(p, (str, bytes, os.PathLike)):
-        p = str(p) if p is not None else ""
-    return _orig_splitext(p)
-os.path.splitext = _safe_splitext
-# ---------------------------------------------
-
 import argparse
 import yaml
 import torch
@@ -40,22 +28,34 @@ def main():
 
     # 1. Inizializzazione del Target
     print("Caricamento del target DeepPrivacy2...")
-    target = DeepPrivacy2Target(device=device)
+    with open(args.config, 'r') as f:
+        config = yaml.safe_load(f)
+    
+    target = DeepPrivacy2Target(models_dir=config['target']['models_dir'])
 
-    # 2. Inizializzazione dell'attacco FGSM
+    # 2. Estrazione sicura dei componenti della pipeline per FGSM
+    anonymizer = target.pipeline if hasattr(target, "pipeline") else target.anonymizer
+    if hasattr(target, "anonymizer"):
+        anonymizer = target.anonymizer
+
+    detector_wrapper = anonymizer.detector
+    dsfd_net = detector_wrapper.face_detector.net.to(device).eval()
+    mean_tensor = detector_wrapper.face_mean.to(device).float().flatten().view(1, 3, 1, 1)
+
+    # 3. Inizializzazione dell'attacco FGSM
     print("Inizializzazione dell'attacco FGSM...")
     attack = FGSMAttack(
-        detector_wrapper=target.anonymizer.detector,
-        dsfd_net=target.anonymizer.detector.face_detector.net.to(device).eval(),
-        mean_tensor=target.anonymizer.detector.face_mean.to(device).float().flatten().view(1, 3, 1, 1),
+        detector_wrapper=detector_wrapper,
+        dsfd_net=dsfd_net,
+        mean_tensor=mean_tensor,
         device=device
     )
 
-    # 3. Caricamento del dataset LFW
+    # 4. Caricamento del dataset LFW
     print("Caricamento del dataset LFW...")
     dataset = LFWDataset(root_dir=args.dataset_path)
 
-    # 4. Configurazione del BenchmarkRunner
+    # 5. Configurazione del BenchmarkRunner
     runner = BenchmarkRunner(
         target=target,
         attack=attack,
@@ -63,7 +63,7 @@ def main():
         device=device
     )
 
-    # 5. Esecuzione del benchmark
+    # 6. Esecuzione del benchmark
     output_dir = "./results_fgsm"
     runner.run_benchmark(
         epsilons=[2.0, 4.0, 8.0, 16.0, 32.0],
@@ -71,7 +71,7 @@ def main():
         output_dir=output_dir
     )
 
-    # 6. Generazione del grafico di visualizzazione
+    # 7. Generazione del grafico di visualizzazione
     csv_path = os.path.join(output_dir, "benchmark_results.csv")
     plot_path = os.path.join(output_dir, "fgsm_comparison_plot.png")
     runner.visualize_best_attack(csv_path=csv_path, save_path=plot_path)
