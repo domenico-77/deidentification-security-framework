@@ -57,7 +57,7 @@ def main():
     
     # DeepFool calcola la perturbazione minima dinamicamente (non usa epsilons fissi)
     # Passiamo una lista fittizia o gestiamo il runner in base alla struttura del tuo BenchmarkRunner
-    runner.run_benchmark(epsilons=[0.0], num_samples=5, output_dir=args.output_dir)
+    runner.run_benchmark(epsilons=[0.0], num_samples=100, output_dir=args.output_dir)
 
     # Generazione automatica del grafico di confronto
     csv_path = os.path.join(args.output_dir, "benchmark_results.csv")
