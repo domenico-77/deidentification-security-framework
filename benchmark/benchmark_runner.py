@@ -42,7 +42,7 @@ class BenchmarkRunner:
         os.makedirs(output_dir, exist_ok=True)
         results = []
 
-        print("Avvio del Benchmark PGD...")
+        print("Avvio del Benchmark...")
         max_samples = min(num_samples, len(self.dataset)) if hasattr(self.dataset, "__len__") else num_samples
         total_expected = len(epsilons) * max_samples
         current_run_count = 0
