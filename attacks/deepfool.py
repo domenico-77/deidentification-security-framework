@@ -29,23 +29,21 @@ class DeepFoolAttack:
         for i in range(max_iter):
             x_norm = x - self.mean_tensor
             
-            # 1. Eseguiamo il detector reale sull'immagine corrente per vedere se il volto è ancora rilevato
+            # 1. Verifica se il volto è già evaso
             with torch.no_grad():
                 eval_input = x.byte().float()
-                # Usa il wrapper del detector per ottenere le box attuali
                 try:
                     dets = self.detector_wrapper(eval_input)
                     face_detected = (dets is not None and len(dets) > 0 and len(dets[0]) > 0)
                 except Exception:
                     face_detected = True
 
-            # Se il detector NON rileva più il volto, l'attacco DeepFool ha SUCCESSO!
             if not face_detected:
                 success = True
                 succ_iter = i + 1
                 break
 
-            # 2. Calcolo dei gradienti per spingere l'ottimizzazione verso l'evasione
+            # 2. Calcolo dei gradienti
             outputs = self.dsfd_net(x_norm, confidence_threshold=0.5, nms_threshold=0.4)
             if isinstance(outputs, (list, tuple)) and len(outputs) > 0:
                 score = sum([o.sum() for o in outputs if isinstance(o, torch.Tensor)])
@@ -67,10 +65,15 @@ class DeepFoolAttack:
             if torch.norm(w) == 0:
                 break
 
-            pert = (torch.abs(f_x) / (torch.norm(w) ** 2 + 1e-8)) * w * (1 + overshoot)
+            # CORRETTO: Aggiunto un fattore di scala ridotto (es. 0.05 o 0.1) 
+            # per evitare di distruggere l'immagine al primo step
+            scaling_factor = 0.05
+            pert = (torch.abs(f_x) / (torch.norm(w) ** 2 + 1e-8)) * w * (1 + overshoot) * scaling_factor
             
             with torch.no_grad():
                 x += pert
+                # Vincoliamo la perturbazione totale rispetto all'immagine originale (es. Linf massimo controllato)
+                # Oppure clamp standard sui pixel [0, 255]
                 x = torch.clamp(x, 0, 255)
                 x.requires_grad = True
 
