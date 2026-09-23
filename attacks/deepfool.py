@@ -29,27 +29,30 @@ class DeepFoolAttack:
         for i in range(max_iter):
             x_norm = x - self.mean_tensor
             
-            # CORREZIONE: Passaggio dei parametri obbligatori a DSFD (confidence_threshold e nms_threshold)
-            # Di solito i valori di default sono 0.5 per la confidenza e 0.45 o 0.3 per la NMS
-            try:
-                outputs = self.dsfd_net(x_norm, confidence_threshold=0.5, nms_threshold=0.4)
-            except TypeError:
-                # Fallback nel caso la firma accetti argomenti diversi o sia il wrapper
-                outputs = self.dsfd_net(x_norm)
+            # 1. Eseguiamo il detector reale sull'immagine corrente per vedere se il volto è ancora rilevato
+            with torch.no_grad():
+                eval_input = x.byte().float()
+                # Usa il wrapper del detector per ottenere le box attuali
+                try:
+                    dets = self.detector_wrapper(eval_input)
+                    face_detected = (dets is not None and len(dets) > 0 and len(dets[0]) > 0)
+                except Exception:
+                    face_detected = True
 
+            # Se il detector NON rileva più il volto, l'attacco DeepFool ha SUCCESSO!
+            if not face_detected:
+                success = True
+                succ_iter = i + 1
+                break
+
+            # 2. Calcolo dei gradienti per spingere l'ottimizzazione verso l'evasione
+            outputs = self.dsfd_net(x_norm, confidence_threshold=0.5, nms_threshold=0.4)
             if isinstance(outputs, (list, tuple)) and len(outputs) > 0:
-                # Somma dei tensori di output per stimare il livello di attivazione/confidenza
                 score = sum([o.sum() for o in outputs if isinstance(o, torch.Tensor)])
             elif isinstance(outputs, torch.Tensor):
                 score = outputs.sum()
             else:
-                score = x_norm.sum() # Fallback di sicurezza
-
-            # Condizione di evasione (se il punteggio crolla o non rileva più nulla)
-            if score.item() < 0.0:
-                success = True
-                succ_iter = i + 1
-                break
+                score = x_norm.sum()
 
             self.dsfd_net.zero_grad()
             if x.grad is not None:
