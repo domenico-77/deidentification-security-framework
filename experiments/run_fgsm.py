@@ -66,7 +66,7 @@ def main():
     mean_tensor = detector_wrapper.face_mean.to(device).float().flatten().view(1, 3, 1, 1)
 
     # 3. Inizializzazione dell'attacco FGSM
-    print("Inizializzazione dell'attacco FGSM...")
+    print("Avvio attacco FGSM...")
     attack = FGSMAttack(
         detector_wrapper=detector_wrapper,
         dsfd_net=dsfd_net,
@@ -75,7 +75,6 @@ def main():
     )
 
     # 4. Caricamento del dataset LFW
-    print("Caricamento del dataset LFW...")
     dataset = LFWDataset(root_dir=args.dataset_path)
 
     # 5. Configurazione del BenchmarkRunner
