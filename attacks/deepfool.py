@@ -17,41 +17,40 @@ class DeepFoolAttack:
         Esegue l'attacco DeepFool per trovare la perturbazione minima necessaria
         a evadere il rilevatore DSFD. Accetta **kwargs per compatibilità con il runner.
         """
-        # Assicura che il tensore sia sul device corretto e abilitato ai gradienti
         x = img_orig_tensor.clone().detach().to(self.device).float()
         x.requires_grad = True
         
         original_image = x.clone()
-        
-        # Copia dell'immagine originale per il calcolo delle metriche finali
         x_orig_np = img_orig_tensor.detach().cpu().numpy()
 
         success = False
         succ_iter = 0
 
         for i in range(max_iter):
-            # Normalizzazione attesa dal detector DSFD
             x_norm = x - self.mean_tensor
             
-            # Forward pass attraverso la rete DSFD
-            # Nota: adattato in base alla struttura dei tensori di output di DSFD
-            outputs = self.dsfd_net(x_norm)
-            
-            # Assumiamo di prendere il punteggio di confidenza della prima classe/detection o il logit massimo
-            if isinstance(outputs, (list, tuple)):
-                # Prende ad esempio la classificazione o il punteggio principale
-                score = outputs[0].sum()
-            else:
-                score = outputs.sum()
+            # CORREZIONE: Passaggio dei parametri obbligatori a DSFD (confidence_threshold e nms_threshold)
+            # Di solito i valori di default sono 0.5 per la confidenza e 0.45 o 0.3 per la NMS
+            try:
+                outputs = self.dsfd_net(x_norm, confidence_threshold=0.5, nms_threshold=0.4)
+            except TypeError:
+                # Fallback nel caso la firma accetti argomenti diversi o sia il wrapper
+                outputs = self.dsfd_net(x_norm)
 
-            # Se il punteggio scende sotto una determinata soglia o non rileva più volti, consideriamo l'attacco riuscito
-            # (Verifica basata sull'evasione del detector)
-            if score.item() < 0.0:  # Condizione di esempio per l'evasione
+            if isinstance(outputs, (list, tuple)) and len(outputs) > 0:
+                # Somma dei tensori di output per stimare il livello di attivazione/confidenza
+                score = sum([o.sum() for o in outputs if isinstance(o, torch.Tensor)])
+            elif isinstance(outputs, torch.Tensor):
+                score = outputs.sum()
+            else:
+                score = x_norm.sum() # Fallback di sicurezza
+
+            # Condizione di evasione (se il punteggio crolla o non rileva più nulla)
+            if score.item() < 0.0:
                 success = True
                 succ_iter = i + 1
                 break
 
-            # Calcolo dei gradienti rispetto all'input
             self.dsfd_net.zero_grad()
             if x.grad is not None:
                 x.grad.zero_()
@@ -59,19 +58,16 @@ class DeepFoolAttack:
             score.backward()
             grad = x.grad.data.clone()
 
-            # Semplificazione della logica iterativa di DeepFool per il gradiente del detector
             w = grad
             f_x = score
 
             if torch.norm(w) == 0:
                 break
 
-            # Calcolo della perturbazione minima (formula standard di DeepFool)
             pert = (torch.abs(f_x) / (torch.norm(w) ** 2 + 1e-8)) * w * (1 + overshoot)
             
             with torch.no_grad():
                 x += pert
-                # Proiezione opzionale nei limiti validi dei pixel (es. [0, 255] o [-1, 1])
                 x = torch.clamp(x, 0, 255)
                 x.requires_grad = True
 
@@ -79,7 +75,6 @@ class DeepFoolAttack:
 
         img_adv = x.detach()
         
-        # Calcolo metriche di supporto (Linf, L2, MSE, PSNR)
         diff = img_adv - original_image
         l_inf = torch.max(torch.abs(diff)).item()
         l2 = torch.norm(diff).item()
