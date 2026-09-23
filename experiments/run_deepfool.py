@@ -52,7 +52,7 @@ def main():
     dataset = LFWDataset(root_dir=args.dataset_path)
     runner = BenchmarkRunner(target, attack, dataset)
 
-    print("Avvio del Benchmark DeepFool...")
+    print("Avvio attacco DeepFool...")
     os.makedirs(args.output_dir, exist_ok=True)
     
     # DeepFool calcola la perturbazione minima dinamicamente (non usa epsilons fissi)
