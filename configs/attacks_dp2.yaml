@@ -1,0 +1,13 @@
+# Configurazione globale target
+target:
+  name: "deeprivacy2"
+  models_dir: "/kaggle/input/datasets/domenicovicenti/deep-privacy2-models"
+
+detector:
+  name: "dsfd"
+
+# Parametri di default specifici per PGD (utilizzati da run_pgd.py)
+pgd_attack:
+  epsilon: 32.0
+  alpha: 2.0
+  steps: 150
