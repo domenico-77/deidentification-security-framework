@@ -1,12 +1,11 @@
 import torch
 import torch.nn as nn
 import numpy as np
+from attacks.base_attack import BaseAttack  # Importa la classe base
 
-class DeepFoolAttack:
+class DeepFoolAttack(BaseAttack):  # Eredita da BaseAttack
     def __init__(self, detector_wrapper, dsfd_net, mean_tensor, device="cuda"):
-        """
-        Inizializza l'attacco DeepFool contro il detector DSFD di DeepPrivacy2.
-        """
+        super().__init__()  # Inizializza la classe base se previsto
         self.detector_wrapper = detector_wrapper
         self.dsfd_net = dsfd_net
         self.mean_tensor = mean_tensor
