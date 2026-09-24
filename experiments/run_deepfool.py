@@ -18,7 +18,7 @@ from benchmark.benchmark_runner import BenchmarkRunner
 
 def main():
     parser = argparse.ArgumentParser(description="Run DeepFool Benchmark against DeepPrivacy2")
-    parser.add_argument("--config", type=str, default="configs/pgd.yaml")
+    parser.add_argument("--config", type=str, default="configs/attacks_dp2.yaml")
     parser.add_argument("--dataset_path", type=str, required=True)
     parser.add_argument("--output_dir", type=str, default="./results")
     args = parser.parse_args()
