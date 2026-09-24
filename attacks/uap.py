@@ -15,7 +15,7 @@ class UAPAttack(BaseAttack):
         self.mean_tensor = mean_tensor
         self.uap_perturbation = None  # Verrà inizializzata durante il .fit()
 
-    def fit(self, dataloader, epsilon=16.0, alpha=2.0, epochs=5, max_iter_per_img=5):
+    def fit(self, dataloader, epsilon=16.0, alpha=2.0, epochs=5, max_iter_per_img=15):
         """
         Calcola la perturbazione universale iterando sul dataloader di training.
         """
@@ -52,7 +52,8 @@ class UAPAttack(BaseAttack):
                     # 1. Verifica se con la UAP corrente il volto è già ingannato
                     with torch.no_grad():
                         current_adv = torch.clamp(img_tensor + self.uap_perturbation, 0.0, 255.0)
-                        eval_input = current_adv.unsqueeze(0).byte().float()
+                        # Garantiamo il formato [C, H, W] richiesto dal detector
+                        eval_input = current_adv.squeeze(0).byte().float() if current_adv.ndim == 4 else current_adv.byte().float()
                         dets = self.detector_wrapper(eval_input)
                         if dets is None or len(dets) == 0 or len(dets[0]) == 0:
                             fooled_count += 1
@@ -72,7 +73,6 @@ class UAPAttack(BaseAttack):
                         loss = torch.tensor(0.0, device=self.device, requires_grad=True)
                         if isinstance(net_out, torch.Tensor) and net_out.ndim == 3 and net_out.shape[-1] == 5:
                             confidences = net_out[..., 4]
-                            # Vogliamo minimizzare la confidenza dei box per azzerare i rilevamenti
                             loss = confidences.mean()
                         elif isinstance(net_out, torch.Tensor):
                             loss = net_out.mean()
@@ -87,16 +87,14 @@ class UAPAttack(BaseAttack):
 
                         if delta_local.grad is not None:
                             with torch.no_grad():
-                                # Gradient descent (-) per minimizzare la confidenza del rilevatore
                                 grad_sign = delta_local.grad.sign()
                                 delta_local = delta_local - alpha * grad_sign
-                                # Proiezione rigorosa nel budget L-infinito
                                 delta_local = torch.clamp(delta_local, min=-epsilon, max=epsilon)
                                 delta_local = delta_local.detach()
                         else:
                             break
 
-                    # 3. Aggiornamento globale stabile della UAP (Exponential Moving Average)
+                    # 3. Aggiornamento globale stabile della UAP (EMA)
                     with torch.no_grad():
                         self.uap_perturbation = 0.85 * self.uap_perturbation + 0.15 * delta_local
                         self.uap_perturbation = torch.clamp(self.uap_perturbation, min=-epsilon, max=epsilon)
@@ -104,7 +102,7 @@ class UAPAttack(BaseAttack):
                     # 4. Controllo post-aggiornamento
                     with torch.no_grad():
                         current_adv = torch.clamp(img_tensor + self.uap_perturbation, 0.0, 255.0)
-                        eval_input = current_adv.unsqueeze(0).byte().float()
+                        eval_input = current_adv.squeeze(0).byte().float() if current_adv.ndim == 4 else current_adv.byte().float()
                         dets = self.detector_wrapper(eval_input)
                         if dets is None or len(dets) == 0 or len(dets[0]) == 0:
                             fooled_count += 1
@@ -137,11 +135,8 @@ class UAPAttack(BaseAttack):
         img_adv = torch.clamp(x + current_uap, 0.0, 255.0)
 
         with torch.no_grad():
-            eval_input = img_adv.detach().byte().float()
-            if eval_input.ndim == 4:
-                eval_input = eval_input.squeeze(0)
-            
-            dets = self.detector_wrapper(eval_input.unsqueeze(0))
+            eval_input = img_adv.squeeze(0).byte().float() if img_adv.ndim == 4 else img_adv.byte().float()
+            dets = self.detector_wrapper(eval_input)
             success = (dets is None or len(dets) == 0 or len(dets[0]) == 0)
 
         return img_adv, success, 1
