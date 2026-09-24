@@ -65,7 +65,7 @@ def main():
     # Usiamo un epsilon di default (es. 16.0) per la palla L-inf della UAP
     epsilon_uap = 16.0
     print("Avvio calcolo della Universal Adversarial Perturbation (UAP)...")
-    attack.fit(dataloader=train_loader, epsilon=epsilon_uap, alpha=2.5, epochs=8, max_iter_per_img=15)
+    attack.fit(dataloader=train_loader, epsilon=epsilon_uap, alpha=2, epochs=10, max_iter_per_img=20)
 
     # 2. FASE DI BENCHMARK: Valutazione delle performance su diverse epsilon
     print("\nAvvio Benchmark UAP sul dataset di test...")
