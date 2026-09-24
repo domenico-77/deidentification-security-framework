@@ -23,10 +23,8 @@ class UAPAttack(BaseAttack):
         
         # 1. Otteniamo la forma di un'immagine campione dal dataloader per inizializzare v
         sample_batch = next(iter(dataloader))
-        # Gestiamo sia il caso in cui il dataloader restituisce (img, label) sia solo img
         sample_img = sample_batch[0] if isinstance(sample_batch, (list, tuple)) else sample_batch
         
-        # v ha la stessa forma di un'immagine [C, H, W] o batch [1, C, H, W]
         if sample_img.ndim == 4:
             sample_img = sample_img[0]
             
@@ -56,9 +54,11 @@ class UAPAttack(BaseAttack):
                     x_adv = torch.clamp(img_tensor + self.uap_perturbation, 0.0, 255.0).clone().detach()
                     x_adv.requires_grad_(True)
 
-                    # Verifichiamo se il volto è ancora rilevato
+                    # Verifichiamo se il volto è ancora rilevato (assicurandoci che sia 3D [C, H, W])
                     with torch.no_grad():
-                        eval_input = x_adv.detach().byte().float().unsqueeze(0)
+                        eval_input = x_adv.detach().byte().float()
+                        if eval_input.ndim == 4:
+                            eval_input = eval_input.squeeze(0)
                         dets = self.detector_wrapper(eval_input)
                         face_detected = (dets is not None and len(dets) > 0 and len(dets[0]) > 0)
 
@@ -66,8 +66,7 @@ class UAPAttack(BaseAttack):
                         fooled_count += 1
                         continue # Se è già evaso, passiamo all'immagine successiva
 
-                    # Altrimenti, eseguiamo qualche step di gradient ascent (simile a PGD) 
-                    # per trovare la minima perturbazione locale che inganna il detector su questa specifica immagine
+                    # Altrimenti, eseguiamo qualche step di gradient ascent
                     for _ in range(max_iter_per_img):
                         x_adv.requires_grad_(True)
                         input_net = x_adv.unsqueeze(0) - self.mean_tensor
@@ -96,14 +95,15 @@ class UAPAttack(BaseAttack):
                         with torch.no_grad():
                             # Aggiorniamo la perturbazione universale v accumulando la direzione
                             self.uap_perturbation = self.uap_perturbation - alpha * grad_sign
-                            
                             # Proiezione sulla palla L-infinito di raggio epsilon
                             self.uap_perturbation = torch.clamp(self.uap_perturbation, min=-epsilon, max=epsilon)
 
-                        # Ricontrolliamo l'evasione
+                        # Ricontrolliamo l'evasione (formato 3D [C, H, W])
                         with torch.no_grad():
                             current_adv = torch.clamp(img_tensor + self.uap_perturbation, 0.0, 255.0)
-                            eval_input = current_adv.byte().float().unsqueeze(0)
+                            eval_input = current_adv.byte().float()
+                            if eval_input.ndim == 4:
+                                eval_input = eval_input.squeeze(0)
                             dets = self.detector_wrapper(eval_input)
                             if dets is None or len(dets) == 0 or len(dets[0]) == 0:
                                 break
@@ -125,17 +125,16 @@ class UAPAttack(BaseAttack):
         # Applicazione diretta di v vincolata nello spazio pixel [0, 255]
         img_adv = torch.clamp(x + self.uap_perturbation, 0.0, 255.0)
 
-        # Valutazione del successo dell'attacco sull'immagine singola
+        # Valutazione del successo dell'attacco sull'immagine singola (formato 3D [C, H, W])
         with torch.no_grad():
             eval_input = img_adv.detach().byte().float()
-            # Se l'immagine è [C, H, W], aggiungiamo la dimensione batch per il detector
-            if eval_input.ndim == 3:
-                eval_input = eval_input.unsqueeze(0)
+            if eval_input.ndim == 4:
+                eval_input = eval_input.squeeze(0)
                 
             dets = self.detector_wrapper(eval_input)
             success = (dets is None or len(dets) == 0 or len(dets[0]) == 0)
 
-        succ_iter = 1 # La UAP applica la perturbazione in un unico step di inferenza
+        succ_iter = 1 
         return img_adv, success, succ_iter
 
     def attack(self, image_tensor: torch.Tensor, **kwargs) -> torch.Tensor:
