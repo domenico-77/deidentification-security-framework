@@ -9,7 +9,8 @@ class UAPAttack(BaseAttack):
     Eredita da BaseAttack per mantenere coerenza con il framework di sicurezza IA.
     """
     def __init__(self, detector_wrapper, dsfd_net, mean_tensor, device="cuda"):
-        super().__init__(device=device)
+        # Passiamo correttamente il detector alla classe base BaseAttack
+        super().__init__(detector=detector_wrapper, device=device)
         self.detector_wrapper = detector_wrapper
         self.dsfd_net = dsfd_net
         self.mean_tensor = mean_tensor
