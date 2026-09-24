@@ -104,7 +104,7 @@ class UAPAttack(BaseAttack):
                         grad_sign = x_adv.grad.sign().squeeze(0)
 
                         with torch.no_grad():
-                            self.uap_perturbation = self.uap_perturbation - alpha * grad_sign
+                            self.uap_perturbation = self.uap_perturbation + alpha * grad_sign
                             self.uap_perturbation = torch.clamp(self.uap_perturbation, min=-epsilon, max=epsilon)
 
                         with torch.no_grad():
