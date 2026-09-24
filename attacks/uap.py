@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 from tqdm import tqdm
-from attacks.base import BaseAttack
+from attacks.base_attack import BaseAttack
 
 class UAPAttack(BaseAttack):
     """
