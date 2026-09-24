@@ -5,9 +5,3 @@ target:
 
 detector:
   name: "dsfd"
-
-# Parametri di default specifici per PGD (utilizzati da run_pgd.py)
-pgd_attack:
-  epsilon: 32.0
-  alpha: 2.0
-  steps: 150
