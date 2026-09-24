@@ -21,7 +21,7 @@ def main():
     parser = argparse.ArgumentParser(description="Run UAP Benchmark against DeepPrivacy2")
     parser.add_argument("--config", type=str, default="configs/attacks_dp2.yaml")
     parser.add_argument("--dataset_path", type=str, required=True)
-    parser.add_argument("--output_dir", type=str, default="./results_uap")
+    parser.add_argument("--output_dir", type=str, default="./results")
     parser.add_argument("--train_samples", type=int, default=50, help="Numero di immagini da usare per calcolare la UAP")
     args = parser.parse_args()
 
