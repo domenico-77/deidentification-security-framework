@@ -2,6 +2,3 @@
 target:
   name: "deeprivacy2"
   models_dir: "/kaggle/input/datasets/domenicovicenti/deep-privacy2-models"
-
-detector:
-  name: "dsfd"
