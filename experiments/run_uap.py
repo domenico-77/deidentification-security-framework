@@ -22,7 +22,7 @@ def main():
     parser.add_argument("--config", type=str, default="configs/attacks_dp2.yaml")
     parser.add_argument("--dataset_path", type=str, required=True)
     parser.add_argument("--output_dir", type=str, default="./results")
-    parser.add_argument("--train_samples", type=int, default=100, help="Numero di immagini da usare per calcolare la UAP")
+    parser.add_argument("--train_samples", type=int, default=50, help="Numero di immagini da usare per calcolare la UAP")
     args = parser.parse_args()
 
     with open(args.config, 'r') as f:
@@ -63,9 +63,9 @@ def main():
 
     # 1. FASE DI FIT: Calcolo della Universal Adversarial Perturbation
     # Usiamo un epsilon di default (es. 16.0) per la palla L-inf della UAP
-    epsilon_uap = 8.0
+    epsilon_uap = 16.0
     print("Avvio calcolo della Universal Adversarial Perturbation (UAP)...")
-    attack.fit(dataloader=train_loader, epsilon=epsilon_uap, alpha=2, epochs=8, max_iter_per_img=10)
+    attack.fit(dataloader=train_loader, epsilon=epsilon_uap, alpha=2, epochs=5, max_iter_per_img=15)
 
     # 2. FASE DI BENCHMARK: Valutazione delle performance su diverse epsilon
     print("\nAvvio Benchmark UAP sul dataset di test...")
