@@ -31,7 +31,7 @@ def set_seed(seed_value=42):
 def main():
     set_seed(42)
     parser = argparse.ArgumentParser(description="Run PGD Benchmark against DeepPrivacy2")
-    parser.add_argument("--config", type=str, default="configs/pgd.yaml")
+    parser.add_argument("--config", type=str, default="configs/attacks_dp2.yaml")
     parser.add_argument("--dataset_path", type=str, required=True)
     args = parser.parse_args()
 
