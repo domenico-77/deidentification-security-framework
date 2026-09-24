@@ -123,8 +123,8 @@ class UAPAttack(BaseAttack):
 
     def perturb(self, img_orig_tensor, **kwargs):
         """
-        Implementa il metodo astratto di BaseAttack per applicare la perturbazione.
-        Rispettatore dell'epsilon dinamico passato dai kwargs del benchmark runner.
+        Applica la perturbazione universale pre-calcolata a un'immagine di test,
+        rispettando l'epsilon eventualmente passato dai kwargs del benchmark runner.
         """
         if self.uap_perturbation is None:
             raise ValueError("La UAP non è stata calcolata! Esegui prima .fit(dataloader).")
@@ -155,3 +155,10 @@ class UAPAttack(BaseAttack):
 
         succ_iter = 1 
         return img_adv, success, succ_iter
+
+    def attack(self, img_orig_tensor, **kwargs):
+        """
+        Implementazione del metodo astratto obbligatorio richiesto da BaseAttack.
+        Delega l'esecuzione direttamente a perturb().
+        """
+        return self.perturb(img_orig_tensor, **kwargs)
