@@ -9,14 +9,13 @@ class UAPAttack(BaseAttack):
     Eredita da BaseAttack per mantenere coerenza con il framework di sicurezza IA.
     """
     def __init__(self, detector_wrapper, dsfd_net, mean_tensor, device="cuda"):
-        # Passiamo correttamente il detector alla classe base BaseAttack
         super().__init__(detector=detector_wrapper, device=device)
         self.detector_wrapper = detector_wrapper
         self.dsfd_net = dsfd_net
         self.mean_tensor = mean_tensor
         self.uap_perturbation = None  # Verrà inizializzata durante il .fit()
 
-    def fit(self, dataloader, epsilon=16.0, alpha=1.0, epochs=5, max_iter_per_img=15):
+    def fit(self, dataloader, epsilon=16.0, alpha=2.0, epochs=5, max_iter_per_img=5):
         """
         Calcola la perturbazione universale iterando sul dataloader di training.
         """
@@ -24,10 +23,7 @@ class UAPAttack(BaseAttack):
         
         # Inizializziamo la perturbazione universale a zero basandoci sul primo batch
         sample_batch = next(iter(dataloader))
-        if isinstance(sample_batch, (list, tuple)):
-            sample_img = sample_batch[0]
-        else:
-            sample_img = sample_batch
+        sample_img = sample_batch[0] if isinstance(sample_batch, (list, tuple)) else sample_batch
 
         if sample_img.ndim == 4:
             _, c, h, w = sample_img.shape
@@ -36,86 +32,82 @@ class UAPAttack(BaseAttack):
             
         self.uap_perturbation = torch.zeros((c, h, w), device=self.device, dtype=torch.float32)
 
-        print(f"[INFO] Inizio calcolo UAP: epsilon={epsilon}, alpha={alpha}, epochs={epochs}")
+        print(f"[INFO] Inizio calcolo UAP globale: epsilon={epsilon}, alpha={alpha}, epochs={epochs}")
 
         for epoch in range(epochs):
             fooled_count = 0
             total_images = 0
 
             for batch in tqdm(dataloader, desc=f"[UAP Epoch {epoch+1}/{epochs}]"):
-                if isinstance(batch, (list, tuple)):
-                    images = batch[0]
-                else:
-                    images = batch
+                images = batch[0] if isinstance(batch, (list, tuple)) else batch
+                images = images.to(self.device).float()
 
-                for img in images:
+                if images.ndim == 3:
+                    images = images.unsqueeze(0)
+
+                for i in range(images.shape[0]):
+                    img_tensor = images[i]
                     total_images += 1
-                    img_tensor = img.clone().detach().to(self.device).float()
-                    
-                    if img_tensor.ndim == 3:
-                        img_tensor = img_tensor.unsqueeze(0)
-                    
-                    img_tensor = img_tensor.squeeze(0)
 
-                    # Verifichiamo se con la UAP corrente il volto è già ingannato
+                    # 1. Verifica se con la UAP corrente il volto è già ingannato
                     with torch.no_grad():
                         current_adv = torch.clamp(img_tensor + self.uap_perturbation, 0.0, 255.0)
-                        eval_input = current_adv.byte().float()
+                        eval_input = current_adv.unsqueeze(0).byte().float()
                         dets = self.detector_wrapper(eval_input)
                         if dets is None or len(dets) == 0 or len(dets[0]) == 0:
                             fooled_count += 1
                             continue
 
-                    # Altrimenti, eseguiamo step di gradient ascent locali
-                    x_adv = img_tensor + self.uap_perturbation.clone().detach()
-                    x_adv = torch.clamp(x_adv, 0.0, 255.0)
+                    # 2. Ottimizzazione locale per spingere il detector a perdere il volto
+                    delta_local = self.uap_perturbation.clone().detach().requires_grad_(True)
 
                     for _ in range(max_iter_per_img):
-                        x_adv.requires_grad_(True)
+                        delta_local.requires_grad_(True)
+                        x_adv = torch.clamp(img_tensor + delta_local, 0.0, 255.0)
                         input_net = x_adv.unsqueeze(0) - self.mean_tensor
                         
                         net_out = self.dsfd_net(input_net, 0.0, 0.0)
                         
-                        loss_terms = []
-                        if isinstance(net_out, (list, tuple)):
-                            for t in net_out:
-                                if isinstance(t, torch.Tensor):
-                                    if t.ndim >= 2 and t.shape[-1] == 2:
-                                        loss_terms.append(torch.relu(t[..., 1] - t[..., 0]).sum())
-                                    else:
-                                        loss_terms.append(torch.relu(t).sum())
+                        # Estraiamo le confidenze [1, 5333, 5] -> canale 4
+                        loss = torch.tensor(0.0, device=self.device, requires_grad=True)
+                        if isinstance(net_out, torch.Tensor) and net_out.ndim == 3 and net_out.shape[-1] == 5:
+                            confidences = net_out[..., 4]
+                            # Vogliamo minimizzare la confidenza dei box per azzerare i rilevamenti
+                            loss = confidences.mean()
                         elif isinstance(net_out, torch.Tensor):
-                            loss_terms.append(torch.relu(net_out).sum())
-
-                        if len(loss_terms) > 0:
-                            loss = sum(loss_terms)
-                        else:
-                            loss = x_adv.sum()
+                            loss = net_out.mean()
+                        elif isinstance(net_out, (list, tuple)):
+                            loss = sum([t.mean() for t in net_out if isinstance(t, torch.Tensor)])
 
                         self.dsfd_net.zero_grad()
-                        if x_adv.grad is not None:
-                            x_adv.grad.zero_()
+                        if delta_local.grad is not None:
+                            delta_local.grad.zero_()
                             
                         loss.backward()
 
-                        if x_adv.grad is None:
+                        if delta_local.grad is not None:
+                            with torch.no_grad():
+                                # Gradient descent (-) per minimizzare la confidenza del rilevatore
+                                grad_sign = delta_local.grad.sign()
+                                delta_local = delta_local - alpha * grad_sign
+                                # Proiezione rigorosa nel budget L-infinito
+                                delta_local = torch.clamp(delta_local, min=-epsilon, max=epsilon)
+                                delta_local = delta_local.detach()
+                        else:
                             break
 
-                        grad_sign = x_adv.grad.sign().squeeze(0)
+                    # 3. Aggiornamento globale stabile della UAP (Exponential Moving Average)
+                    with torch.no_grad():
+                        self.uap_perturbation = 0.85 * self.uap_perturbation + 0.15 * delta_local
+                        self.uap_perturbation = torch.clamp(self.uap_perturbation, min=-epsilon, max=epsilon)
 
-                        with torch.no_grad():
-                            self.uap_perturbation = self.uap_perturbation + alpha * grad_sign
-                            self.uap_perturbation = torch.clamp(self.uap_perturbation, min=-epsilon, max=epsilon)
-
-                        with torch.no_grad():
-                            current_adv = torch.clamp(img_tensor + self.uap_perturbation, 0.0, 255.0)
-                            eval_input = current_adv.byte().float()
-                            if eval_input.ndim == 4:
-                                eval_input = eval_input.squeeze(0)
-                            dets = self.detector_wrapper(eval_input)
-                            if dets is None or len(dets) == 0 or len(dets[0]) == 0:
-                                fooled_count += 1
-                                break
+                    # 4. Controllo post-aggiornamento
+                    with torch.no_grad():
+                        current_adv = torch.clamp(img_tensor + self.uap_perturbation, 0.0, 255.0)
+                        eval_input = current_adv.unsqueeze(0).byte().float()
+                        dets = self.detector_wrapper(eval_input)
+                        if dets is None or len(dets) == 0 or len(dets[0]) == 0:
+                            fooled_count += 1
 
             fooling_rate = (fooled_count / total_images) * 100 if total_images > 0 else 0.0
             print(f"[UAP Epoch {epoch+1}/{epochs}] Fooling Rate sul dataset: {fooling_rate:.2f}%")
@@ -124,14 +116,12 @@ class UAPAttack(BaseAttack):
 
     def perturb(self, img_orig_tensor, **kwargs):
         """
-        Applica la perturbazione universale pre-calcolata a un'immagine di test,
-        rispettando l'epsilon eventualmente passato dai kwargs del benchmark runner.
+        Applica la perturbazione universale pre-calcolata a un'immagine di test.
         """
         if self.uap_perturbation is None:
             raise ValueError("La UAP non è stata calcolata! Esegui prima .fit(dataloader).")
 
         x = img_orig_tensor.clone().detach().to(self.device).float()
-        
         epsilon_eval = kwargs.get("epsilon", None)
         
         if epsilon_eval is not None:
@@ -150,16 +140,14 @@ class UAPAttack(BaseAttack):
             eval_input = img_adv.detach().byte().float()
             if eval_input.ndim == 4:
                 eval_input = eval_input.squeeze(0)
-                
-            dets = self.detector_wrapper(eval_input)
+            
+            dets = self.detector_wrapper(eval_input.unsqueeze(0))
             success = (dets is None or len(dets) == 0 or len(dets[0]) == 0)
 
-        succ_iter = 1 
-        return img_adv, success, succ_iter
+        return img_adv, success, 1
 
     def attack(self, img_orig_tensor, **kwargs):
         """
-        Implementazione del metodo astratto obbligatorio richiesto da BaseAttack.
-        Delega l'esecuzione direttamente a perturb().
+        Implementazione del metodo astratto richiesto da BaseAttack.
         """
         return self.perturb(img_orig_tensor, **kwargs)
