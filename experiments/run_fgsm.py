@@ -42,7 +42,7 @@ warnings.filterwarnings("ignore")
 
 def main():
     parser = argparse.ArgumentParser(description="Run FGSM Benchmark against DeepPrivacy2")
-    parser.add_argument("--config", type=str, default="configs/pgd.yaml")
+    parser.add_argument("--config", type=str, default="configs/attacks_dp2.yaml")
     parser.add_argument("--dataset_path", type=str, required=True)
     args = parser.parse_args()
 
