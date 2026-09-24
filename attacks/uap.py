@@ -14,7 +14,7 @@ class UAPAttack(BaseAttack):
         self.mean_tensor = mean_tensor
         self.uap_perturbation = None
 
-    def fit(self, dataloader, epsilon=16.0, alpha=2.5, epochs=8, max_iter_per_img=12):
+    def fit(self, dataloader, epsilon=16.0, alpha=2, epochs=10, max_iter_per_img=20):
         self.dsfd_net.eval()
         
         sample_batch = next(iter(dataloader))
