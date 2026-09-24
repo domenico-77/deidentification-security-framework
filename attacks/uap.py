@@ -115,15 +115,30 @@ class UAPAttack(BaseAttack):
 
     def perturb(self, img_orig_tensor, **kwargs):
         """
-        Applica la perturbazione universale pre-calcolata a un'immagine di test.
+        Applica la perturbazione universale pre-calcolata a un'immagine di test,
+        rispettando l'epsilon eventualmente passato dai kwargs del benchmark runner.
         """
         if self.uap_perturbation is None:
             raise ValueError("La UAP non è stata calcolata! Esegui prima .fit(dataloader) o carica un tensore salvato.")
 
         x = img_orig_tensor.clone().detach().to(self.device).float()
         
-        # Applicazione diretta di v vincolata nello spazio pixel [0, 255]
-        img_adv = torch.clamp(x + self.uap_perturbation, 0.0, 255.0)
+        # Recupera l'epsilon dinamico dal runner se presente, altrimenti usa la norma della UAP o un default
+        epsilon_eval = kwargs.get("epsilon", None)
+        
+        if epsilon_eval is not None:
+            # Scala o limita la UAP fissa in base all'epsilon del test corrente (mantenendo la direzione)
+            uap_norm = torch.max(torch.abs(self.uap_perturbation))
+            if uap_norm > 0:
+                scale = min(1.0, epsilon_eval / uap_norm.item())
+                current_uap = self.uap_perturbation * scale
+            else:
+                current_uap = self.uap_perturbation
+        else:
+            current_uap = self.uap_perturbation
+
+        # Applicazione della UAP vincolata nello spazio pixel [0, 255]
+        img_adv = torch.clamp(x + current_uap, 0.0, 255.0)
 
         # Valutazione del successo dell'attacco sull'immagine singola (formato 3D [C, H, W])
         with torch.no_grad():
