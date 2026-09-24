@@ -4,12 +4,13 @@ import numpy as np
 from attacks.base_attack import BaseAttack  # Importa la classe base
 
 class DeepFoolAttack(BaseAttack):  # Eredita da BaseAttack
-    def __init__(self, detector_wrapper, dsfd_net, mean_tensor, device="cuda"):
-        super().__init__()  # Inizializza la classe base se previsto
-        self.detector_wrapper = detector_wrapper
-        self.dsfd_net = dsfd_net
-        self.mean_tensor = mean_tensor
-        self.device = device
+    def __init__(self, detector=None, detector_wrapper=None, dsfd_net=None, mean_tensor=None, device: torch.device = None):
+        det = detector if detector is not None else detector_wrapper
+        super().__init__(detector=det, device=device)  # Inizializza correttamente la classe base
+        
+        self.detector_wrapper = self.detector
+        self.dsfd_net = dsfd_net.to(self.device) if dsfd_net is not None else None
+        self.mean_tensor = mean_tensor.to(self.device) if mean_tensor is not None else None
 
     def perturb(self, img_orig_tensor, max_iter=50, overshoot=0.02, **kwargs):
         """
@@ -20,7 +21,6 @@ class DeepFoolAttack(BaseAttack):  # Eredita da BaseAttack
         x.requires_grad = True
         
         original_image = x.clone()
-        x_orig_np = img_orig_tensor.detach().cpu().numpy()
 
         success = False
         succ_iter = 0
@@ -64,15 +64,12 @@ class DeepFoolAttack(BaseAttack):  # Eredita da BaseAttack
             if torch.norm(w) == 0:
                 break
 
-            # CORRETTO: Aggiunto un fattore di scala ridotto (es. 0.05 o 0.1) 
-            # per evitare di distruggere l'immagine al primo step
+            # Fattore di scala ridotto per evitare di distruggere l'immagine al primo step
             scaling_factor = 0.05
             pert = (torch.abs(f_x) / (torch.norm(w) ** 2 + 1e-8)) * w * (1 + overshoot) * scaling_factor
             
             with torch.no_grad():
                 x += pert
-                # Vincoliamo la perturbazione totale rispetto all'immagine originale (es. Linf massimo controllato)
-                # Oppure clamp standard sui pixel [0, 255]
                 x = torch.clamp(x, 0, 255)
                 x.requires_grad = True
 
@@ -96,3 +93,11 @@ class DeepFoolAttack(BaseAttack):  # Eredita da BaseAttack
         }
 
         return img_adv, success, succ_iter
+
+    def attack(self, image_tensor: torch.Tensor, **kwargs) -> torch.Tensor:
+        """
+        Metodo astratto obbligatorio richiesto da BaseAttack.
+        Restituisce direttamente l'immagine perturbata.
+        """
+        img_adv, _, _ = self.perturb(image_tensor, **kwargs)
+        return img_adv
