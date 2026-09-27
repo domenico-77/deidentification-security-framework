@@ -5,8 +5,7 @@ from attacks.base_attack import BaseAttack
 
 class UAPAttack(BaseAttack):
     """
-    Universal Adversarial Perturbation (UAP) Attack contro il rilevatore facciale DSFD.
-    Ricalcola la perturbazione in base all'epsilon fornito.
+    Universal Adversarial Perturbation (UAP) Attack ottimizzato contro il DSFD.
     """
     def __init__(self, detector_wrapper, dsfd_net, mean_tensor, device="cuda"):
         super().__init__(detector=detector_wrapper, device=device)
@@ -15,110 +14,126 @@ class UAPAttack(BaseAttack):
         self.mean_tensor = mean_tensor
         self.uap_perturbation = None
 
-    def fit(self, dataloader, epsilon=16.0, alpha=1.0, epochs=5, max_iter_per_img=15):
-        """
-        Calcola la perturbazione universale addestrandola specificamente per il budget epsilon indicato.
-        """
+    def fit(self, dataloader, epsilon=16.0, alpha=2, epochs=8, max_iter_per_img=15):
         self.dsfd_net.eval()
         
-        # Inizializziamo una nuova UAP a zero per questo specifico epsilon
         sample_batch = next(iter(dataloader))
         sample_img = sample_batch[0] if isinstance(sample_batch, (list, tuple)) else sample_batch
-        c, h, w = sample_img.shape[1:] if sample_img.ndim == 4 else sample_img.shape
+
+        if sample_img.ndim == 4:
+            _, c, h, w = sample_img.shape
+        else:
+            c, h, w = sample_img.shape[0], sample_img.shape[1], sample_img.shape[2]
             
         self.uap_perturbation = torch.zeros((c, h, w), device=self.device, dtype=torch.float32)
 
-        print(f"[INFO] Avvio calcolo UAP dedicata per epsilon={epsilon} (Epoche: {epochs})")
+        print(f"[INFO] Inizio calcolo UAP avanzato: epsilon={epsilon}, alpha={alpha}, epochs={epochs}")
 
         for epoch in range(epochs):
             fooled_count = 0
             total_images = 0
 
-            for batch in dataloader:
+            for batch in tqdm(dataloader, desc=f"[UAP Epoch {epoch+1}/{epochs}]"):
                 images = batch[0] if isinstance(batch, (list, tuple)) else batch
+                images = images.to(self.device).float()
 
-                for img in images:
+                if images.ndim == 3:
+                    images = images.unsqueeze(0)
+
+                for i in range(images.shape[0]):
+                    img_tensor = images[i]
                     total_images += 1
-                    img_tensor = img.clone().detach().to(self.device).float()
-                    if img_tensor.ndim == 3:
-                        img_tensor = img_tensor.unsqueeze(0)
-                    img_tensor = img_tensor.squeeze(0)
 
-                    # Verifica se il volto è già evaso con la UAP corrente
+                    # 1. Check rapido con la UAP corrente
                     with torch.no_grad():
                         current_adv = torch.clamp(img_tensor + self.uap_perturbation, 0.0, 255.0)
-                        eval_input = current_adv.byte().float()
+                        eval_input = current_adv.squeeze(0).byte().float() if current_adv.ndim == 4 else current_adv.byte().float()
                         dets = self.detector_wrapper(eval_input)
                         if dets is None or len(dets) == 0 or len(dets[0]) == 0:
                             fooled_count += 1
                             continue
 
-                    # Step locali di gradient ascent
-                    x_adv = img_tensor + self.uap_perturbation.clone().detach()
-                    x_adv = torch.clamp(x_adv, 0.0, 255.0)
+                    # 2. Ottimizzazione locale con Margin Loss mirata
+                    delta_local = self.uap_perturbation.clone().detach().requires_grad_(True)
 
                     for _ in range(max_iter_per_img):
-                        x_adv.requires_grad_(True)
+                        delta_local.requires_grad_(True)
+                        x_adv = torch.clamp(img_tensor + delta_local, 0.0, 255.0)
                         input_net = x_adv.unsqueeze(0) - self.mean_tensor
+                        
                         net_out = self.dsfd_net(input_net, 0.0, 0.0)
                         
-                        loss_terms = []
-                        if isinstance(net_out, (list, tuple)):
-                            for t in net_out:
-                                if isinstance(t, torch.Tensor):
-                                    if t.ndim >= 2 and t.shape[-1] == 2:
-                                        loss_terms.append(torch.relu(t[..., 1] - t[..., 0]).sum())
-                                    else:
-                                        loss_terms.append(torch.relu(t).sum())
+                        loss = torch.tensor(0.0, device=self.device, requires_grad=True)
+                        if isinstance(net_out, torch.Tensor) and net_out.ndim == 3 and net_out.shape[-1] == 5:
+                            confidences = net_out[..., 4]
+                            # Margin loss: penalizziamo attivamente i box con confidenza maggiore di -1.0
+                            active_conf = confidences[confidences > -1.0]
+                            if active_conf.numel() > 0:
+                                loss = active_conf.sum()
+                            else:
+                                loss = confidences.mean()
                         elif isinstance(net_out, torch.Tensor):
-                            loss_terms.append(torch.relu(net_out).sum())
-
-                        loss = sum(loss_terms) if loss_terms else x_adv.sum()
+                            loss = net_out.mean()
+                        elif isinstance(net_out, (list, tuple)):
+                            loss = sum([t.mean() for t in net_out if isinstance(t, torch.Tensor)])
 
                         self.dsfd_net.zero_grad()
-                        if x_adv.grad is not None:
-                            x_adv.grad.zero_()
+                        if delta_local.grad is not None:
+                            delta_local.grad.zero_()
+                            
                         loss.backward()
 
-                        if x_adv.grad is None:
+                        if delta_local.grad is not None:
+                            with torch.no_grad():
+                                grad_sign = delta_local.grad.sign()
+                                # Step di discesa adattivo leggermente più incisivo
+                                delta_local = delta_local - alpha * grad_sign
+                                delta_local = torch.clamp(delta_local, min=-epsilon, max=epsilon)
+                                delta_local = delta_local.detach()
+                        else:
                             break
 
-                        grad_sign = x_adv.grad.sign().squeeze(0)
+                    # 3. Aggiornamento globale EMA più reattivo (0.8 / 0.2)
+                    with torch.no_grad():
+                        self.uap_perturbation = 0.80 * self.uap_perturbation + 0.20 * delta_local
+                        self.uap_perturbation = torch.clamp(self.uap_perturbation, min=-epsilon, max=epsilon)
 
-                        with torch.no_grad():
-                            # Aggiornamento e clamping stretto al budget epsilon corrente
-                            self.uap_perturbation = self.uap_perturbation - alpha * grad_sign
-                            self.uap_perturbation = torch.clamp(self.uap_perturbation, min=-epsilon, max=epsilon)
-
-                        with torch.no_grad():
-                            current_adv = torch.clamp(img_tensor + self.uap_perturbation, 0.0, 255.0)
-                            eval_input = current_adv.byte().float()
-                            if eval_input.ndim == 4:
-                                eval_input = eval_input.squeeze(0)
-                            dets = self.detector_wrapper(eval_input)
-                            if dets is None or len(dets) == 0 or len(dets[0]) == 0:
-                                fooled_count += 1
-                                break
+                    # 4. Controllo post-aggiornamento
+                    with torch.no_grad():
+                        current_adv = torch.clamp(img_tensor + self.uap_perturbation, 0.0, 255.0)
+                        eval_input = current_adv.squeeze(0).byte().float() if current_adv.ndim == 4 else current_adv.byte().float()
+                        dets = self.detector_wrapper(eval_input)
+                        if dets is None or len(dets) == 0 or len(dets[0]) == 0:
+                            fooled_count += 1
 
             fooling_rate = (fooled_count / total_images) * 100 if total_images > 0 else 0.0
-            print(f"[UAP e={epsilon} | Epoca {epoch+1}/{epochs}] Fooling Rate Training: {fooling_rate:.2f}%")
+            print(f"[UAP Epoch {epoch+1}/{epochs}] Fooling Rate sul dataset: {fooling_rate:.2f}%")
 
-        print(f"[INFO] UAP completata per epsilon={epsilon}")
+        print("[INFO] Calcolo UAP avanzato completato con successo!")
 
     def perturb(self, img_orig_tensor, **kwargs):
-        """
-        Applica la UAP pre-calcolata per l'epsilon in corso.
-        """
         if self.uap_perturbation is None:
-            raise ValueError("La UAP non è stata calcolata! Esegui prima .fit(dataloader, epsilon).")
+            raise ValueError("La UAP non è stata calcolata! Esegui prima .fit(dataloader).")
 
         x = img_orig_tensor.clone().detach().to(self.device).float()
-        img_adv = torch.clamp(x + self.uap_perturbation, 0.0, 255.0)
+        epsilon_eval = kwargs.get("epsilon", None)
+        
+        if epsilon_eval is not None:
+            uap_norm = torch.max(torch.abs(self.uap_perturbation))
+            if uap_norm > 0:
+                # Se l'epsilon di test è basso, evitiamo di scalare linearmente a zero se possibile, 
+                # oppure applichiamo una proiezione pulita al nuovo budget epsilon_eval
+                scale = min(1.0, epsilon_eval / uap_norm.item())
+                current_uap = torch.clamp(self.uap_perturbation * scale, min=-epsilon_eval, max=epsilon_eval)
+            else:
+                current_uap = self.uap_perturbation
+        else:
+            current_uap = self.uap_perturbation
+
+        img_adv = torch.clamp(x + current_uap, 0.0, 255.0)
 
         with torch.no_grad():
-            eval_input = img_adv.detach().byte().float()
-            if eval_input.ndim == 4:
-                eval_input = eval_input.squeeze(0)
+            eval_input = img_adv.squeeze(0).byte().float() if img_adv.ndim == 4 else img_adv.byte().float()
             dets = self.detector_wrapper(eval_input)
             success = (dets is None or len(dets) == 0 or len(dets[0]) == 0)
 
