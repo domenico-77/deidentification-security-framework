@@ -74,7 +74,7 @@ def main():
     runner = BenchmarkRunner(target, attack, full_dataset)
     
     # Esegue il benchmark testando i diversi valori di epsilon consentiti dalla UAP
-    runner.run_benchmark(epsilons=[4.0, 8.0, 16.0, 32.0], num_samples=100, output_dir=args.output_dir)
+    runner.run_benchmark(epsilons=[2.0, 4.0, 8.0, 16.0, 24.0, 32.0], num_samples=100, output_dir=args.output_dir)
 
     # Generazione automatica del grafico di confronto
     csv_path = os.path.join(args.output_dir, "benchmark_results.csv")
