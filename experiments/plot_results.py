@@ -1,7 +1,41 @@
 import os
+import argparse
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+
+def print_aggregated_stats():
+    base_dir = "/kaggle/working/deidentification-security-framework/results_baseline_uap"
+    std_csv = os.path.join(base_dir, "standard", "benchmark_results.csv")
+    ded_csv = os.path.join(base_dir, "dedicated_per_epsilon", "benchmark_results_dedicated.csv")
+
+    def _process_csv(csv_path, title):
+        if not os.path.exists(csv_path):
+            print(f"File non trovato: {csv_path}")
+            return
+            
+        df = pd.read_csv(csv_path)
+        df['evaded_num'] = df['evaded'].astype(float)
+        
+        agg_df = df.groupby('epsilon').agg(
+            evaded=('evaded_num', 'mean'),
+            psnr=('psnr', 'mean'),
+            pipeline_mse=('pipeline_mse', 'mean'),
+            iterations=('iterations', 'mean'),
+            asr_percent=('evaded_num', lambda x: x.mean() * 100)
+        ).reset_index()
+        
+        print(f"\nStatistiche aggregate per Epsilon ({title}):")
+        print(agg_df.to_string(index=True, formatters={
+            'evaded': '{:.2f}'.format,
+            'psnr': '{:.6f}'.format,
+            'pipeline_mse': '{:.6f}'.format,
+            'iterations': '{:.1f}'.format,
+            'asr_percent': '{:.1f}'.format
+        }))
+
+    _process_csv(std_csv, "Standard")
+    _process_csv(ded_csv, "Dedicati per Epsilon")
 
 def generate_plots(csv_path="./results/benchmark_results.csv", output_dir="./results"):
     if not os.path.exists(csv_path):
@@ -13,7 +47,7 @@ def generate_plots(csv_path="./results/benchmark_results.csv", output_dir="./res
 
     # Calcola statistiche aggregate per ogni epsilon
     grouped = df.groupby("epsilon").agg({
-        "evaded": "mean",         # ASR (Attack Success Rate)
+        "evaded": "mean",       # ASR (Attack Success Rate)
         "psnr": "mean",           # PSNR medio
         "pipeline_mse": "mean",   # MSE medio
         "iterations": "mean"      # Iterazioni medie
@@ -95,4 +129,13 @@ def generate_plots(csv_path="./results/benchmark_results.csv", output_dir="./res
     print(f"Grafico Pipeline MSE salvato in: {plot5_path}")
 
 if __name__ == "__main__":
-    generate_plots()
+    parser = argparse.ArgumentParser(description="Gestione plotting e statistiche UAP")
+    parser.add_argument("--uap", action="store_true", help="Mostra le statistiche aggregate formattate per standard e dedicati")
+    parser.add_argument("--csv_path", type=str, default="./results/benchmark_results.csv")
+    parser.add_argument("--output_dir", type=str, default="./results")
+    args = parser.parse_args()
+
+    if args.stats_only:
+        print_aggregated_stats()
+    else:
+        generate_plots(csv_path=args.csv_path, output_dir=args.output_dir)
