@@ -12,14 +12,31 @@ def generate_plots_for_csv(csv_path, output_dir):
     df = pd.read_csv(csv_path)
     os.makedirs(output_dir, exist_ok=True)
 
+    # Assicuriamoci che la colonna evaded sia numerica per l'aggregazione
+    if "evaded" in df.columns:
+        df["evaded_num"] = df["evaded"].astype(float)
+    else:
+        df["evaded_num"] = 0.0
+
     grouped = df.groupby("epsilon").agg({
-        "evaded": "mean",       # ASR (Attack Success Rate)
-        "psnr": "mean",         # PSNR medio
-        "pipeline_mse": "mean", # MSE medio
-        "iterations": "mean"    # Iterazioni medie
+        "evaded_num": "mean",       # ASR medio
+        "psnr": "mean",             # PSNR medio
+        "pipeline_mse": "mean",     # MSE medio
+        "iterations": "mean"        # Iterazioni medie
     }).reset_index()
 
+    grouped.rename(columns={"evaded_num": "evaded"}, inplace=True)
     grouped["asr_percent"] = grouped["evaded"] * 100.0
+
+    # STAMPA DELLA TABELLA AGGREGATA (che desideri rivedere a schermo)
+    print("Statistiche aggregate per Epsilon:")
+    print(grouped.to_string(index=True, formatters={
+        'evaded': '{:.2f}'.format,
+        'psnr': '{:.6f}'.format,
+        'pipeline_mse': '{:.6f}'.format,
+        'iterations': '{:.2f}'.format,
+        'asr_percent': '{:.1f}'.format
+    }))
 
     # --- GRAFICO 1: ASR vs Epsilon ---
     plt.figure(figsize=(8, 5))
@@ -31,6 +48,7 @@ def generate_plots_for_csv(csv_path, output_dir):
     plt.ylim(-5, 105)
     plt.savefig(os.path.join(output_dir, "asr_vs_epsilon.png"), dpi=300, bbox_inches='tight')
     plt.close()
+    print(f"Grafico ASR salvato in: {os.path.join(output_dir, 'asr_vs_epsilon.png')}")
 
     # --- GRAFICO 2: PSNR vs Epsilon ---
     plt.figure(figsize=(8, 5))
@@ -41,6 +59,7 @@ def generate_plots_for_csv(csv_path, output_dir):
     plt.grid(True, linestyle='--', alpha=0.6)
     plt.savefig(os.path.join(output_dir, "psnr_vs_epsilon.png"), dpi=300, bbox_inches='tight')
     plt.close()
+    print(f"Grafico PSNR salvato in: {os.path.join(output_dir, 'psnr_vs_epsilon.png')}")
 
     # --- GRAFICO 3: Distribuzione delle Norme L2 ---
     if "l2" in df.columns:
@@ -55,6 +74,7 @@ def generate_plots_for_csv(csv_path, output_dir):
         plt.grid(True, linestyle='--', alpha=0.6)
         plt.savefig(os.path.join(output_dir, "l2_distribution.png"), dpi=300, bbox_inches='tight')
         plt.close()
+        print(f"Istogramma distribuzione L2 salvato in: {os.path.join(output_dir, 'l2_distribution.png')}")
 
     # --- GRAFICO 4: Iterazioni al Successo ---
     plt.figure(figsize=(8, 5))
@@ -65,6 +85,7 @@ def generate_plots_for_csv(csv_path, output_dir):
     plt.grid(True, linestyle='--', alpha=0.6)
     plt.savefig(os.path.join(output_dir, "iterations_vs_epsilon.png"), dpi=300, bbox_inches='tight')
     plt.close()
+    print(f"Grafico iterazioni medie salvato in: {os.path.join(output_dir, 'iterations_vs_epsilon.png')}")
 
     # --- GRAFICO 5: MSE della Pipeline ---
     plt.figure(figsize=(8, 5))
@@ -75,7 +96,7 @@ def generate_plots_for_csv(csv_path, output_dir):
     plt.grid(True, linestyle='--', alpha=0.6)
     plt.savefig(os.path.join(output_dir, "pipeline_mse_vs_epsilon.png"), dpi=300, bbox_inches='tight')
     plt.close()
-    print(f"Grafici salvati in: {output_dir}")
+    print(f"Grafico Pipeline MSE salvato in: {os.path.join(output_dir, 'pipeline_mse_vs_epsilon.png')}")
 
 def process_uap_workflow():
     base_dir = "/kaggle/working/deidentification-security-framework/results_baseline_uap"
@@ -106,11 +127,9 @@ def process_uap_workflow():
             'asr_percent': '{:.1f}'.format
         }))
 
-    # 1. Mostra le tabelle
     _print_stats(std_csv, "Standard")
     _print_stats(ded_csv, "Dedicati per Epsilon")
 
-    # 2. Genera i grafici separati per entrambe le categorie
     print("\n[INFO] Generazione grafici per UAP Standard...")
     generate_plots_for_csv(std_csv, os.path.join(base_dir, "standard", "plots"))
 
