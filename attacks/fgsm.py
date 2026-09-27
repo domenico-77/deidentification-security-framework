@@ -23,45 +23,49 @@ class FGSMAttack(BaseAttack):
         # 2. Forward pass per estrarre i logit grezzi della rete di detection
         net_out = self.dsfd_net(input_net, 0.0, 0.0)
         
-        # 3. Loss di massimizzazione mirata (Targeted Logit Inversion)
+        # 3. Loss di evasione coerente con PGD (penalizza la confidenza del volto)
         loss = torch.tensor(0.0, device=self.device, requires_grad=True)
         if isinstance(net_out, (list, tuple)):
             for t in net_out:
                 if isinstance(t, torch.Tensor):
                     if t.ndim >= 2 and t.shape[-1] == 2:
-                        loss = loss + (t[..., 1] - t[..., 0]).sum()
+                        face_logits = t[..., 1]
+                        bg_logits = t[..., 0]
+                        loss = loss + torch.relu(face_logits - bg_logits).sum()
                     else:
-                        loss = loss + t.sum()
+                        loss = loss + torch.relu(t).sum()
         elif isinstance(net_out, torch.Tensor):
-            loss = loss + net_out.sum()
+            loss = loss + torch.relu(net_out).sum()
 
-        # 4. Backward pass per calcolare il gradiente in un unico colpo
+        # 4. Backward pass per calcolare il gradiente
         self.dsfd_net.zero_grad()
+        if img_adv.grad is not None:
+            img_adv.grad.zero_()
+            
         loss.backward()
 
         success = False
+        success_iteration = None
 
-        # 5. Applicazione del passo singolo massimizzato (FGSM Puro)
+        # 5. Applicazione del passo FGSM corretto (Sottrazione del segno del gradiente)
         if img_adv.grad is not None and torch.abs(img_adv.grad).sum().item() > 0:
             grad_sign = img_adv.grad.sign()
             with torch.no_grad():
-                img_adv = img_adv + epsilon * grad_sign
+                img_adv = img_adv - epsilon * grad_sign
                 
                 eta = img_adv - img_orig_tensor
                 eta = torch.clamp(eta, min=-epsilon, max=epsilon)
                 img_adv = torch.clamp(img_orig_tensor + eta, min=0.0, max=255.0).detach()
                 
-        # 6. Verifica dell'effettiva evasione del detector
-        detector_input = img_adv.detach().byte().float()
-        with torch.no_grad():
-            detections = self.detector(detector_input)
-        
-        chk_faces = len(detections[0]) if (len(detections) > 0 and detections[0] is not None) else 0
-        if chk_faces == 0:
-            success = True
-
-        # Assegnazione coerente: 1 se ha avuto successo al primo colpo, None se ha fallito
-        success_iteration = 1 if success else None
+            # 6. Verifica dell'effettiva evasione del detector
+            detector_input = img_adv.detach().byte().float()
+            with torch.no_grad():
+                detections = self.detector(detector_input)
+            
+            chk_faces = len(detections[0]) if (len(detections) > 0 and detections[0] is not None) else 0
+            if chk_faces == 0:
+                success = True
+                success_iteration = 1
 
         return img_adv, success, success_iteration
 
