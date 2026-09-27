@@ -135,7 +135,7 @@ if __name__ == "__main__":
     parser.add_argument("--output_dir", type=str, default="./results")
     args = parser.parse_args()
 
-    if args.stats_only:
+    if args.uap:
         print_aggregated_stats()
     else:
         generate_plots(csv_path=args.csv_path, output_dir=args.output_dir)
