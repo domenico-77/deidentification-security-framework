@@ -44,7 +44,7 @@ def main():
     parser = argparse.ArgumentParser(description="Run BIM Benchmark against DeepPrivacy2")
     parser.add_argument("--config", type=str, default="configs/attacks_dp2.yaml")
     parser.add_argument("--dataset_path", type=str, required=True)
-    parser.add_argument("--output_dir", type=str, default="./results_bim")
+    parser.add_argument("--output_dir", type=str, default="./results")
     args = parser.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
