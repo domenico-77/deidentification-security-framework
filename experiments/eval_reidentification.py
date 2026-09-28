@@ -14,6 +14,7 @@ from attacks.fgsm import FGSMAttack
 from attacks.bim import BIMAttack
 from attacks.pgd import PGDAttack
 from attacks.uap import UAPAttack
+from attacks.deepfool import 
 from data_loaders.lfw import LFWDataset
 
 def get_attack_instance(attack_name, detector_wrapper, dsfd_net, mean_tensor, device, epsilon):
