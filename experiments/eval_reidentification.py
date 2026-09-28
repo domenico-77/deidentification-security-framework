@@ -28,6 +28,10 @@ def get_attack_instance(attack_name, detector_wrapper, dsfd_net, mean_tensor, de
         return BIMAttack(detector_wrapper, dsfd_net, mean_tensor, device=device)
     elif attack_name == "pgd":
         return PGDAttack(detector_wrapper, dsfd_net, mean_tensor, device=device)
+    elif attack_name == "deepfool":
+        return DeepFoolAttack(detector_wrapper, dsfd_net, mean_tensor, device=device)
+    elif attack_name == "uap":
+        return UAPAttack(detector_wrapper, dsfd_net, mean_tensor, device=device)
     else:
         raise ValueError(f"Attacco non supportato o non valido: {attack_name}")
 
