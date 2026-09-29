@@ -115,9 +115,22 @@ def main():
 
         # B. Passaggio attraverso la pipeline di anonimizzazione
         with torch.no_grad():
-            img_anonymized = target.anonymize(img_tensor) if hasattr(target, "anonymize") else target(img_tensor)
+            # 1. Immagine originale -> Anonimizzata (GAN)
+            if hasattr(target, "anonymize"):
+                img_anonymized = target.anonymize(img_tensor)
+            elif hasattr(target, "pipeline"):
+                img_anonymized = target.pipeline(img_tensor)
+            else:
+                raise AttributeError("Il target DeepPrivacy2 non possiede un metodo di anonimizzazione valido.")
+            
+            # 2. Immagine perturbata -> Pipeline (se il detector fallisce, bypassa e tiene l'originale rumorosa)
             img_adv_tensor = img_adv.unsqueeze(0) if img_adv.ndim == 3 else img_adv
-            img_pipeline_adv = target.anonymize(img_adv_tensor) if hasattr(target, "anonymize") else target(img_adv_tensor)
+            if hasattr(target, "anonymize"):
+                img_pipeline_adv = target.anonymize(img_adv_tensor)
+            elif hasattr(target, "pipeline"):
+                img_pipeline_adv = target.pipeline(img_adv_tensor)
+            else:
+                raise AttributeError("Il target DeepPrivacy2 non possiede un metodo di anonimizzazione valido.")
 
         # C. Registrazione metriche e comportamento
         results.append({
