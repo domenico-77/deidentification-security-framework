@@ -49,18 +49,17 @@ def get_attack_instance(attack_name, detector_wrapper, dsfd_net, mean_tensor, de
     """Factory per selezionare l'attacco desiderato da riga di comando."""
     attack_name = attack_name.lower()
     if attack_name == "fgsm":
-        return FGSMAttack(detector_wrapper, dsfd_net, mean_tensor=mean_tensor, device=device)
+        return FGSMAttack(detector_wrapper=detector_wrapper, dsfd_net=dsfd_net, mean_tensor=mean_tensor, device=device)
     elif attack_name == "bim":
-        return BIMAttack(detector_wrapper, dsfd_net, mean_tensor=mean_tensor, device=device)
+        return BIMAttack(detector_wrapper=detector_wrapper, dsfd_net=dsfd_net, mean_tensor=mean_tensor, device=device)
     elif attack_name == "pgd":
-        return PGDAttack(detector_wrapper, dsfd_net, mean_tensor=mean_tensor, device=device)
+        return PGDAttack(detector_wrapper=detector_wrapper, dsfd_net=dsfd_net, mean_tensor=mean_tensor, device=device)
     elif attack_name == "deepfool":
-        return DeepFoolAttack(detector_wrapper, dsfd_net, mean_tensor=mean_tensor, device=device)
+        return DeepFoolAttack(detector_wrapper=detector_wrapper, dsfd_net=dsfd_net, mean_tensor=mean_tensor, device=device)
     elif attack_name == "uap":
-        return UAPAttack(detector_wrapper, dsfd_net, mean_tensor=mean_tensor, device=device)
+        return UAPAttack(detector_wrapper=detector_wrapper, dsfd_net=dsfd_net, mean_tensor=mean_tensor, device=device)
     else:
         raise ValueError(f"Attacco non supportato o non valido: {attack_name}")
-
 def main():
     parser = argparse.ArgumentParser(description="Valutazione Identity Leakage & Re-identification Confronto")
     parser.add_argument("--attack", type=str, default="bim", choices=["fgsm", "bim", "pgd", "uap", "deepfool"], help="Tipo di attacco da testare")
