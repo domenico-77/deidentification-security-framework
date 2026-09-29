@@ -3,6 +3,21 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import os
+import inspect
+
+# --- PATCH DI SICUREZZA SICURA PER PYTHON 3.12 ---
+_old_getsourcefile = inspect.getsourcefile
+def _safe_getsourcefile(object):
+    try:
+        # Se non è un modulo standard o ha un file anomalo, evitiamo il crash
+        f = _old_getsourcefile(object)
+        if f is not None and not isinstance(f, (str, bytes, os.PathLike)):
+            return None
+        return f
+    except Exception:
+        return None
+inspect.getsourcefile = _safe_getsourcefile
+# -------------------------------------------------------------
 import argparse
 import torch
 import torch.nn.functional as F
