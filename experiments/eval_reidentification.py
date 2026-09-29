@@ -115,20 +115,21 @@ def main():
 
         # B. Passaggio attraverso la pipeline di anonimizzazione
         with torch.no_grad():
-            # Riportiamo il tensore originale in formato uint8 [0, 255]
-            img_tensor_uint8 = img_tensor.detach().byte()
+            # Rimuoviamo la dimensione del batch se presente e convertiamo in uint8 [C, H, W]
+            img_single = img_tensor[0] if img_tensor.ndim == 4 else img_tensor
+            img_single_uint8 = img_single.detach().byte()
             
             # 1. Immagine originale -> Anonimizzata (GAN)
             if hasattr(target, "anonymize"):
-                img_anonymized = target.anonymize(img_tensor_uint8)
+                img_anonymized = target.anonymize(img_single_uint8)
             elif hasattr(target, "pipeline"):
-                img_anonymized = target.pipeline(img_tensor_uint8)
+                img_anonymized = target.pipeline(img_single_uint8)
             else:
                 raise AttributeError("Il target DeepPrivacy2 non possiede un metodo di anonimizzazione valido.")
             
-            # 2. Immagine perturbata -> Pipeline (convertita anch'essa in uint8)
-            img_adv_tensor = img_adv.unsqueeze(0) if img_adv.ndim == 3 else img_adv
-            img_adv_uint8 = img_adv_tensor.detach().byte()
+            # 2. Immagine perturbata -> Pipeline (estraendo l'elemento singolo [0] se ha batch)
+            img_adv_single = img_adv[0] if img_adv.ndim == 4 else img_adv
+            img_adv_uint8 = img_adv_single.detach().byte()
             
             if hasattr(target, "anonymize"):
                 img_pipeline_adv = target.anonymize(img_adv_uint8)
