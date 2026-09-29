@@ -5,11 +5,21 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import os
 import inspect
 
-# --- PATCH DI SICUREZZA SICURA PER PYTHON 3.12 ---
+# --- PATCH DI SICUREZZA ROBUSTA PER PYTHON 3.12 (GETFILE & GETSOURCEFILE) ---
+_old_getfile = inspect.getfile
+def _safe_getfile(object):
+    try:
+        f = _old_getfile(object)
+        if not isinstance(f, (str, bytes, os.PathLike)):
+            return __file__
+        return f
+    except Exception:
+        return __file__
+inspect.getfile = _safe_getfile
+
 _old_getsourcefile = inspect.getsourcefile
 def _safe_getsourcefile(object):
     try:
-        # Se non è un modulo standard o ha un file anomalo, evitiamo il crash
         f = _old_getsourcefile(object)
         if f is not None and not isinstance(f, (str, bytes, os.PathLike)):
             return None
@@ -17,7 +27,8 @@ def _safe_getsourcefile(object):
     except Exception:
         return None
 inspect.getsourcefile = _safe_getsourcefile
-# -------------------------------------------------------------
+# --------------------------------------------------------------------------
+
 import argparse
 import torch
 import torch.nn.functional as F
@@ -52,7 +63,7 @@ def get_attack_instance(attack_name, detector_wrapper, dsfd_net, mean_tensor, de
 
 def main():
     parser = argparse.ArgumentParser(description="Valutazione Identity Leakage & Re-identification Confronto")
-    parser.add_argument("--attack", type=str, default="bim", choices=["fgsm", "bim", "pgd", "uap"], help="Tipo di attacco da testare")
+    parser.add_argument("--attack", type=str, default="bim", choices=["fgsm", "bim", "pgd", "uap", "deepfool"], help="Tipo di attacco da testare")
     parser.add_argument("--model", type=str, default="deeprivacy2", choices=["deeprivacy2"], help="Modello di anonimizzazione")
     parser.add_argument("--epsilon", type=float, default=8.0, help="Valore di epsilon per la perturbazione")
     parser.add_argument("--num_samples", type=int, default=30, help="Numero di campioni del dataset da valutare")
@@ -96,7 +107,6 @@ def main():
 
         # A. Generazione immagine perturbata tramite l'attacco selezionato
         if hasattr(attack, "perturb"):
-            # Gestione firma metodo perturb a seconda dell'implementazione (alcuni richiedono epsilon come argomento)
             try:
                 img_adv, success, _ = attack.perturb(img_tensor[0], epsilon=args.epsilon)
             except TypeError:
@@ -106,10 +116,7 @@ def main():
 
         # B. Passaggio attraverso la pipeline di anonimizzazione
         with torch.no_grad():
-            # 1. Immagine originale -> Anonimizzata (GAN)
             img_anonymized = target.anonymize(img_tensor) if hasattr(target, "anonymize") else target(img_tensor)
-            
-            # 2. Immagine perturbata -> Pipeline (se il detector fallisce, bypassa e tiene l'originale rumorosa)
             img_adv_tensor = img_adv.unsqueeze(0) if img_adv.ndim == 3 else img_adv
             img_pipeline_adv = target.anonymize(img_adv_tensor) if hasattr(target, "anonymize") else target(img_adv_tensor)
 
