@@ -4,6 +4,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import os
 import inspect
+import types
 
 # --- PATCH DI SICUREZZA ROBUSTA PER PYTHON 3.12 (GETFILE & GETSOURCEFILE) ---
 _old_getfile = inspect.getfile
@@ -60,6 +61,7 @@ def get_attack_instance(attack_name, detector_wrapper, dsfd_net, mean_tensor, de
         return UAPAttack(detector_wrapper=detector_wrapper, dsfd_net=dsfd_net, mean_tensor=mean_tensor, device=device)
     else:
         raise ValueError(f"Attacco non supportato o non valido: {attack_name}")
+
 def main():
     parser = argparse.ArgumentParser(description="Valutazione Identity Leakage & Re-identification Confronto")
     parser.add_argument("--attack", type=str, default="bim", choices=["fgsm", "bim", "pgd", "uap", "deepfool"], help="Tipo di attacco da testare")
@@ -78,6 +80,14 @@ def main():
     if args.model == "deeprivacy2":
         target = DeepPrivacy2Target(models_dir="/kaggle/input/datasets/domenicovicenti/deep-privacy2-models")
         anonymizer = target.pipeline if hasattr(target, "pipeline") else target.anonymizer
+        
+        # PATCH DINAMICA AL VOLO (senza toccare targets/deeprivacy2.py) per forward_G
+        if hasattr(anonymizer, "forward_G"):
+            _orig_forward_G = anonymizer.forward_G
+            def _patched_forward_G(self, *args, multi_modal_truncation=False, amp=False, truncation_value=0.5, **kwargs):
+                return _orig_forward_G(*args, multi_modal_truncation=multi_modal_truncation, amp=amp, truncation_value=truncation_value, **kwargs)
+            anonymizer.forward_G = types.MethodType(_patched_forward_G, anonymizer)
+
         detector_wrapper = anonymizer.detector
         dsfd_net = detector_wrapper.face_detector.net.to(device).eval()
         mean_tensor = detector_wrapper.face_mean.to(device).float().flatten().view(1, 3, 1, 1)
@@ -117,24 +127,28 @@ def main():
         with torch.no_grad():
             # Rimuoviamo la dimensione del batch se presente e convertiamo in uint8 [C, H, W]
             img_single = img_tensor[0] if img_tensor.ndim == 4 else img_tensor
-            img_single_uint8 = img_single.detach().byte()
+            if img_single.max() <= 1.0:
+                img_single = img_single * 255.0
+            img_single_uint8 = img_single.detach().byte().to(device)
             
             # 1. Immagine originale -> Anonimizzata (GAN)
             if hasattr(target, "anonymize"):
                 img_anonymized = target.anonymize(img_single_uint8)
-            elif hasattr(target, "pipeline"):
-                img_anonymized = target.pipeline(img_single_uint8)
+            elif hasattr(anonymizer, "__call__"):
+                img_anonymized = anonymizer(img_single_uint8)
             else:
                 raise AttributeError("Il target DeepPrivacy2 non possiede un metodo di anonimizzazione valido.")
             
             # 2. Immagine perturbata -> Pipeline (estraendo l'elemento singolo [0] se ha batch)
             img_adv_single = img_adv[0] if img_adv.ndim == 4 else img_adv
-            img_adv_uint8 = img_adv_single.detach().byte()
+            if img_adv_single.max() <= 1.0:
+                img_adv_single = img_adv_single * 255.0
+            img_adv_uint8 = img_adv_single.detach().byte().to(device)
             
             if hasattr(target, "anonymize"):
                 img_pipeline_adv = target.anonymize(img_adv_uint8)
-            elif hasattr(target, "pipeline"):
-                img_pipeline_adv = target.pipeline(img_adv_uint8)
+            elif hasattr(anonymizer, "__call__"):
+                img_pipeline_adv = anonymizer(img_adv_uint8)
             else:
                 raise AttributeError("Il target DeepPrivacy2 non possiede un metodo di anonimizzazione valido.")
                 
