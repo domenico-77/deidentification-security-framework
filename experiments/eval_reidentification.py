@@ -89,7 +89,7 @@ def main():
     attack = get_attack_instance(args.attack, detector_wrapper, dsfd_net, mean_tensor, device, args.epsilon)
 
     # 3. Caricamento dataset
-    dataset = LFWDataset(root_dir="/kaggle/input/datasets/domenicovicenti/lfw-dataset")
+    dataset = LFWDataset(root_dir="/kaggle/input/datasets/jessicali9530/lfw-dataset/lfw-deepfunneled/lfw-deepfunneled")
     results = []
 
     print(f"[INFO] Elaborazione di {min(args.num_samples, len(dataset))} campioni...")
