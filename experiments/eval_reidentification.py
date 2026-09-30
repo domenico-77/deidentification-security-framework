@@ -111,7 +111,13 @@ def main():
             recognizer.prepare(ctx_id=0 if device=='cuda' else -1, det_size=(112, 112))
             print("[INFO] Modello ArcFace (InsightFace) caricato con successo.")
         except Exception as e:
-            print(f"[WARNING] Impossibile inizializzare InsightFace: {e}")
+            print(f"[WARNING] Impossibile inizializzare InsightFace con antelopev2, provo buffalo_l: {e}")
+            try:
+                recognizer = FaceAnalysis(name='buffalo_l', providers=['CUDAExecutionProvider' if device=='cuda' else 'CPUExecutionProvider'])
+                recognizer.prepare(ctx_id=0 if device=='cuda' else -1, det_size=(112, 112))
+                print("[INFO] Modello ArcFace (InsightFace - buffalo_l) caricato con successo.")
+            except Exception as e2:
+                print(f"[ERROR] Impossibile inizializzare alcun modello InsightFace: {e2}")
 
     # 1. Caricamento del target di anonimizzazione
     if args.model == "deeprivacy2":
@@ -141,19 +147,33 @@ def main():
     print(f"[INFO] Elaborazione di {min(args.num_samples, len(dataset))} campioni con analisi di similarità...")
 
     def extract_embedding(img_tensor_chw):
-        """Estrae l'embedding facciale usando ArcFace se disponibile."""
+        """Estrae l'embedding facciale usando ArcFace/InsightFace in modo robusto."""
         if recognizer is None:
             return None
-        img_np = img_tensor_chw.detach().cpu().permute(1, 2, 0).numpy()
-        if img_np.max() <= 1.0:
-            img_np = (img_np * 255.0)
-        img_np = img_np.astype(np.uint8)
-        if img_np.shape[2] == 3:
-            img_np = img_np[:, :, ::-1]
-        
-        faces = recognizer.get(img_np)
-        if len(faces) > 0:
-            return faces[0].embedding
+        try:
+            # Conversione tensore PyTorch [C, H, W] in numpy BGR [H, W, C] in uint8 [0, 255]
+            if isinstance(img_tensor_chw, torch.Tensor):
+                img_np = img_tensor_chw.detach().cpu().permute(1, 2, 0).numpy()
+            else:
+                img_np = np.array(img_tensor_chw)
+                if img_np.ndim == 3 and img_np.shape[0] == 3:
+                    img_np = np.transpose(img_np, (1, 2, 0))
+
+            if img_np.max() <= 1.0:
+                img_np = img_np * 255.0
+            img_np = np.clip(img_np, 0, 255).astype(np.uint8)
+
+            # Conversione RGB -> BGR se necessario per OpenCV/InsightFace
+            if img_np.shape[2] == 3:
+                img_np = img_np[:, :, ::-1]
+            
+            faces = recognizer.get(img_np)
+            if len(faces) > 0:
+                # Ordiniamo per dimensione del bounding box o prendiamo il primo volto rilevato
+                faces = sorted(faces, key=lambda x: (x.bbox[2]-x.bbox[0])*(x.bbox[3]-x.bbox[1]), reverse=True)
+                return faces[0].embedding
+        except Exception as ex:
+            pass
         return None
 
     for idx in tqdm(range(min(args.num_samples, len(dataset)))):
