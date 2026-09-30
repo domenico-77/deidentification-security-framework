@@ -87,7 +87,10 @@ def compute_cosine_similarity(emb1, emb2):
         return 0.0
     emb1 = torch.tensor(emb1) if not isinstance(emb1, torch.Tensor) else emb1
     emb2 = torch.tensor(emb2) if not isinstance(emb2, torch.Tensor) else emb2
-    return F.cosine_similarity(emb1.unsqueeze(0), emb2.unsqueeze(0)).item()
+    # Normalizzazione per sicurezza
+    emb1 = F.normalize(emb1.float().unsqueeze(0), p=2, dim=1)
+    emb2 = F.normalize(emb2.float().unsqueeze(0), p=2, dim=1)
+    return F.cosine_similarity(emb1, emb2).item()
 
 def main():
     parser = argparse.ArgumentParser(description="Valutazione Identity Leakage & Re-identification Confronto")
@@ -109,7 +112,7 @@ def main():
         try:
             recognizer = FaceAnalysis(name='antelopev2', providers=['CUDAExecutionProvider' if device=='cuda' else 'CPUExecutionProvider'])
             recognizer.prepare(ctx_id=0 if device=='cuda' else -1, det_size=(112, 112))
-            print("[INFO] Modello ArcFace (InsightFace) caricato con successo.")
+            print("[INFO] Modello ArcFace (InsightFace - antelopev2) caricato con successo.")
         except Exception as e:
             print(f"[WARNING] Impossibile inizializzare InsightFace con antelopev2, provo buffalo_l: {e}")
             try:
@@ -169,10 +172,25 @@ def main():
             
             faces = recognizer.get(img_np)
             if len(faces) > 0:
-                # Ordiniamo per dimensione del bounding box o prendiamo il primo volto rilevato
+                # Ordiniamo per dimensione del bounding box per prendere il volto principale
                 faces = sorted(faces, key=lambda x: (x.bbox[2]-x.bbox[0])*(x.bbox[3]-x.bbox[1]), reverse=True)
-                return faces[0].embedding
+                face = faces[0]
+                for attr in ['embedding', 'normed_embedding']:
+                    if hasattr(face, attr) and getattr(face, attr) is not None:
+                        emb = getattr(face, attr)
+                        if isinstance(emb, np.ndarray):
+                            return emb
+            
+            # Fallback estremi se il detector standard non trova il volto ma l'immagine è centrata (es. LFW)
+            # Proviamo a passare direttamente l'intera immagine ridimensionata a 112x112 al recognizer se possiede un modello di embedding diretto
+            if hasattr(recognizer, 'models') and 'recognition' in recognizer.models:
+                import cv2
+                resized = cv2.resize(img_np, (112, 112))
+                emb = recognizer.models['recognition'].get(resized)
+                if emb is not None:
+                    return emb
         except Exception as ex:
+            # print(f"[DEBUG EXCEPTION] {ex}")
             pass
         return None
 
