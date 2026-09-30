@@ -141,6 +141,9 @@ def main():
 
     # 2. Inizializzazione dell'attacco scelto
     attack = get_attack_instance(args.attack, detector_wrapper, dsfd_net, mean_tensor, device, args.epsilon)
+
+    # 3. Caricamento dataset
+    dataset = LFWDataset(root_dir="/kaggle/input/datasets/jessicali9530/lfw-dataset/lfw-deepfunneled/lfw-deepfunneled")
     # --- AGGIUNTA PER GESTIRE LA UAP ---
     if args.attack.lower() == "uap":
         print("[INFO] Rilevato attacco UAP: avvio della fase di fit preliminare...")
@@ -149,8 +152,6 @@ def main():
         uap_loader = DataLoader(dataset, batch_size=4, shuffle=True)
         attack.fit(uap_loader, epsilon=args.epsilon, epochs=3) # regolare epochs se necessario
     # -----------------------------------
-    # 3. Caricamento dataset
-    dataset = LFWDataset(root_dir="/kaggle/input/datasets/jessicali9530/lfw-dataset/lfw-deepfunneled/lfw-deepfunneled")
     results = []
 
     print(f"[INFO] Elaborazione di {min(args.num_samples, len(dataset))} campioni con analisi di similarità...")
