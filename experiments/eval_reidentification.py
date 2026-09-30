@@ -54,6 +54,7 @@ import torch.nn.functional as F
 import pandas as pd
 from tqdm import tqdm
 import numpy as np
+import cv2
 
 from targets.deeprivacy2 import DeepPrivacy2Target
 
@@ -87,9 +88,8 @@ def compute_cosine_similarity(emb1, emb2):
         return 0.0
     emb1 = torch.tensor(emb1) if not isinstance(emb1, torch.Tensor) else emb1
     emb2 = torch.tensor(emb2) if not isinstance(emb2, torch.Tensor) else emb2
-    # Normalizzazione per sicurezza
-    emb1 = F.normalize(emb1.float().unsqueeze(0), p=2, dim=1)
-    emb2 = F.normalize(emb2.float().unsqueeze(0), p=2, dim=1)
+    emb1 = F.normalize(emb1.float().flatten().unsqueeze(0), p=2, dim=1)
+    emb2 = F.normalize(emb2.float().flatten().unsqueeze(0), p=2, dim=1)
     return F.cosine_similarity(emb1, emb2).item()
 
 def main():
@@ -150,11 +150,10 @@ def main():
     print(f"[INFO] Elaborazione di {min(args.num_samples, len(dataset))} campioni con analisi di similarità...")
 
     def extract_embedding(img_tensor_chw):
-        """Estrae l'embedding facciale usando ArcFace/InsightFace in modo robusto."""
+        """Estrae l'embedding facciale usando ArcFace/InsightFace con supporto robusto per LFW."""
         if recognizer is None:
             return None
         try:
-            # Conversione tensore PyTorch [C, H, W] in numpy BGR [H, W, C] in uint8 [0, 255]
             if isinstance(img_tensor_chw, torch.Tensor):
                 img_np = img_tensor_chw.detach().cpu().permute(1, 2, 0).numpy()
             else:
@@ -166,31 +165,27 @@ def main():
                 img_np = img_np * 255.0
             img_np = np.clip(img_np, 0, 255).astype(np.uint8)
 
-            # Conversione RGB -> BGR se necessario per OpenCV/InsightFace
+            # RGB -> BGR per OpenCV / InsightFace
             if img_np.shape[2] == 3:
                 img_np = img_np[:, :, ::-1]
-            
+
+            # 1. Tentativo con il detector standard di InsightFace
             faces = recognizer.get(img_np)
             if len(faces) > 0:
-                # Ordiniamo per dimensione del bounding box per prendere il volto principale
                 faces = sorted(faces, key=lambda x: (x.bbox[2]-x.bbox[0])*(x.bbox[3]-x.bbox[1]), reverse=True)
-                face = faces[0]
                 for attr in ['embedding', 'normed_embedding']:
-                    if hasattr(face, attr) and getattr(face, attr) is not None:
-                        emb = getattr(face, attr)
+                    if hasattr(faces[0], attr) and getattr(faces[0], attr) is not None:
+                        emb = getattr(faces[0], attr)
                         if isinstance(emb, np.ndarray):
                             return emb
-            
-            # Fallback estremi se il detector standard non trova il volto ma l'immagine è centrata (es. LFW)
-            # Proviamo a passare direttamente l'intera immagine ridimensionata a 112x112 al recognizer se possiede un modello di embedding diretto
+
+            # 2. Fallback diretto sul modello di riconoscimento se il volto in LFW è già centrato
             if hasattr(recognizer, 'models') and 'recognition' in recognizer.models:
-                import cv2
                 resized = cv2.resize(img_np, (112, 112))
                 emb = recognizer.models['recognition'].get(resized)
                 if emb is not None:
                     return emb
-        except Exception as ex:
-            # print(f"[DEBUG EXCEPTION] {ex}")
+        except Exception:
             pass
         return None
 
