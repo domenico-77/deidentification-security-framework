@@ -144,16 +144,21 @@ def main():
 
     # 3. Caricamento dataset
     dataset = LFWDataset(root_dir="/kaggle/input/datasets/jessicali9530/lfw-dataset/lfw-deepfunneled/lfw-deepfunneled")
-    # --- AGGIUNTA PER GESTIRE LA UAP ---
+    
+    # --- GESTIONE FIT UAP CON PARAMETRI PERSONALIZZATI ---
     if args.attack.lower() == "uap":
-        print("[INFO] Rilevato attacco UAP: avvio della fase di fit preliminare...")
-        # Creiamo un dataloader dedicato per il fit (può usare lo stesso dataset o un sottoinsieme)
-        from torch.utils.data import DataLoader
-        uap_loader = DataLoader(dataset, batch_size=4, shuffle=True)
-        attack.fit(uap_loader, epsilon=args.epsilon, epochs=3) # regolare epochs se necessario
-    # -----------------------------------
-    results = []
+        print("[INFO] Rilevato attacco UAP: avvio della fase di fit (100 campioni, 8 epoche)...")
+        from torch.utils.data import DataLoader, Subset
+        # Limitiamo il fit esattamente a 100 campioni
+        subset_indices = range(min(100, len(dataset)))
+        uap_subset = Subset(dataset, subset_indices)
+        uap_loader = DataLoader(uap_subset, batch_size=4, shuffle=True)
+        
+        # Passiamo alpha, epochs e max_iter_per_img come richiesto
+        attack.fit(uap_loader, epsilon=args.epsilon, alpha=2.0, epochs=8, max_iter_per_img=15)
+    # -----------------------------------------------------
 
+    results = []
     print(f"[INFO] Elaborazione di {min(args.num_samples, len(dataset))} campioni con analisi di similarità...")
 
     def extract_embedding(img_tensor_chw):
