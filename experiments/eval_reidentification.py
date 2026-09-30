@@ -141,7 +141,14 @@ def main():
 
     # 2. Inizializzazione dell'attacco scelto
     attack = get_attack_instance(args.attack, detector_wrapper, dsfd_net, mean_tensor, device, args.epsilon)
-
+    # --- AGGIUNTA PER GESTIRE LA UAP ---
+    if args.attack.lower() == "uap":
+        print("[INFO] Rilevato attacco UAP: avvio della fase di fit preliminare...")
+        # Creiamo un dataloader dedicato per il fit (può usare lo stesso dataset o un sottoinsieme)
+        from torch.utils.data import DataLoader
+        uap_loader = DataLoader(dataset, batch_size=4, shuffle=True)
+        attack.fit(uap_loader, epsilon=args.epsilon, epochs=3) # regolare epochs se necessario
+    # -----------------------------------
     # 3. Caricamento dataset
     dataset = LFWDataset(root_dir="/kaggle/input/datasets/jessicali9530/lfw-dataset/lfw-deepfunneled/lfw-deepfunneled")
     results = []
