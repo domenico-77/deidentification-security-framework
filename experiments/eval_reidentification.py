@@ -111,13 +111,13 @@ def main():
     if HAS_INSIGHTFACE:
         try:
             recognizer = FaceAnalysis(name='antelopev2', providers=['CUDAExecutionProvider' if device=='cuda' else 'CPUExecutionProvider'])
-            recognizer.prepare(ctx_id=0 if device=='cuda' else -1, det_size=(112, 112))
+            recognizer.prepare(ctx_id=0 if device=='cuda' else -1, det_size=(640, 640))
             print("[INFO] Modello ArcFace (InsightFace - antelopev2) caricato con successo.")
         except Exception as e:
             print(f"[WARNING] Impossibile inizializzare InsightFace con antelopev2, provo buffalo_l: {e}")
             try:
                 recognizer = FaceAnalysis(name='buffalo_l', providers=['CUDAExecutionProvider' if device=='cuda' else 'CPUExecutionProvider'])
-                recognizer.prepare(ctx_id=0 if device=='cuda' else -1, det_size=(112, 112))
+                recognizer.prepare(ctx_id=0 if device=='cuda' else -1, det_size=(640, 640))
                 print("[INFO] Modello ArcFace (InsightFace - buffalo_l) caricato con successo.")
             except Exception as e2:
                 print(f"[ERROR] Impossibile inizializzare alcun modello InsightFace: {e2}")
@@ -127,7 +127,6 @@ def main():
         target = DeepPrivacy2Target(models_dir="/kaggle/input/datasets/domenicovicenti/deep-privacy2-models")
         anonymizer = target.pipeline if hasattr(target, "pipeline") else target.anonymizer
         
-        # PATCH DINAMICA AL VOLO per forward_G
         if hasattr(anonymizer, "forward_G"):
             _orig_forward_G = anonymizer.forward_G
             def _patched_forward_G(self, *args, multi_modal_truncation=False, amp=False, truncation_value=0.5, **kwargs):
@@ -165,25 +164,24 @@ def main():
                 img_np = img_np * 255.0
             img_np = np.clip(img_np, 0, 255).astype(np.uint8)
 
-            # RGB -> BGR per OpenCV / InsightFace
             if img_np.shape[2] == 3:
                 img_np = img_np[:, :, ::-1]
 
-            # 1. Tentativo con il detector standard di InsightFace
             faces = recognizer.get(img_np)
             if len(faces) > 0:
                 faces = sorted(faces, key=lambda x: (x.bbox[2]-x.bbox[0])*(x.bbox[3]-x.bbox[1]), reverse=True)
-                for attr in ['embedding', 'normed_embedding']:
-                    if hasattr(faces[0], attr) and getattr(faces[0], attr) is not None:
-                        emb = getattr(faces[0], attr)
-                        if isinstance(emb, np.ndarray):
-                            return emb
+                for face in faces:
+                    for attr in ['embedding', 'normed_embedding']:
+                        if hasattr(face, attr) and getattr(face, attr) is not None:
+                            emb = getattr(face, attr)
+                            if isinstance(emb, np.ndarray) and emb.size > 0:
+                                return emb
 
-            # 2. Fallback diretto sul modello di riconoscimento se il volto in LFW è già centrato
+            # Fallback robusto su LFW (immagini centrate)
             if hasattr(recognizer, 'models') and 'recognition' in recognizer.models:
                 resized = cv2.resize(img_np, (112, 112))
                 emb = recognizer.models['recognition'].get(resized)
-                if emb is not None:
+                if emb is not None and emb.size > 0:
                     return emb
         except Exception:
             pass
@@ -216,7 +214,6 @@ def main():
                 img_single = img_single * 255.0
             img_single_uint8 = img_single.detach().byte().to(device)
             
-            # 1. Immagine originale -> Anonimizzata (GAN)
             if hasattr(target, "anonymize"):
                 img_anonymized = target.anonymize(img_single_uint8)
             elif hasattr(anonymizer, "__call__"):
@@ -224,7 +221,6 @@ def main():
             else:
                 raise AttributeError("Il target DeepPrivacy2 non possiede un metodo di anonimizzazione valido.")
             
-            # 2. Immagine perturbata -> Pipeline
             img_adv_single = img_adv[0] if img_adv.ndim == 4 else img_adv
             if img_adv_single.max() <= 1.0:
                 img_adv_single = img_adv_single * 255.0
