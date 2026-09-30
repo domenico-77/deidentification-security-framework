@@ -5,6 +5,24 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import os
 import inspect
 import types
+import subprocess
+
+# --- INSTALLAZIONE AUTOMATICA DIPENDENZE (INSIGHTFACE & ONNXRUNTIME) ---
+try:
+    import insightface
+    from insightface.app import FaceAnalysis
+    HAS_INSIGHTFACE = True
+except ImportError:
+    print("[INFO] InsightFace non trovato. Installazione automatica in corso...")
+    try:
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "insightface", "onnxruntime-gpu"])
+        import insightface
+        from insightface.app import FaceAnalysis
+        HAS_INSIGHTFACE = True
+        print("[SUCCESSO] InsightFace installato correttamente.")
+    except Exception as e:
+        print(f"[WARNING] Impossibile installare automaticamente InsightFace: {e}")
+        HAS_INSIGHTFACE = False
 
 # --- PATCH DI SICUREZZA ROBUSTA PER PYTHON 3.12 (GETFILE & GETSOURCEFILE) ---
 _old_getfile = inspect.getfile
@@ -46,14 +64,6 @@ from attacks.uap import UAPAttack
 from attacks.deepfool import DeepFoolAttack
 
 from data_loaders.lfw import LFWDataset
-
-# Inizializzazione di unrecognizer facciale (es. ArcFace via InsightFace se disponibile)
-try:
-    import insightface
-    from insightface.app import FaceAnalysis
-    HAS_INSIGHTFACE = True
-except ImportError:
-    HAS_INSIGHTFACE = False
 
 def get_attack_instance(attack_name, detector_wrapper, dsfd_net, mean_tensor, device, epsilon):
     """Factory per selezionare l'attacco desiderato da riga di comando."""
@@ -134,12 +144,10 @@ def main():
         """Estrae l'embedding facciale usando ArcFace se disponibile."""
         if recognizer is None:
             return None
-        # Conversione tensore PyTorch [C, H, W] in numpy BGR [H, W, C] in uint8 [0, 255]
         img_np = img_tensor_chw.detach().cpu().permute(1, 2, 0).numpy()
         if img_np.max() <= 1.0:
             img_np = (img_np * 255.0)
         img_np = img_np.astype(np.uint8)
-        # Se RGB, convertiamo in BGR per OpenCV/InsightFace
         if img_np.shape[2] == 3:
             img_np = img_np[:, :, ::-1]
         
@@ -201,7 +209,6 @@ def main():
         sim_orig_adv = 0.0
 
         if recognizer is not None:
-            # Assicuriamoci che i tensori in uscita siano nel formato [C, H, W] float in [0, 1] o [0, 255]
             if isinstance(img_anonymized, torch.Tensor):
                 img_anon_chw = img_anonymized.detach().cpu()
                 if img_anon_chw.dim() == 4: img_anon_chw = img_anon_chw.squeeze(0)
@@ -242,6 +249,18 @@ def main():
     output_csv = os.path.join(output_dir, f"identity_leakage_similarity_{args.attack}_eps{args.epsilon}.csv")
     df.to_csv(output_csv, index=False)
     print(f"\n[SUCCESSO] Analisi di similarità completata. Report salvato in: {output_csv}")
+
+    # STAMPA TABELLA RIASSUNTIVA E STATISTICHE A TERMINALE
+    print("\n" + "="*80)
+    print(" TABELLA RIASSUNTIVA DEI RISULTATI (Campioni elaborati)")
+    print("="*80)
+    print(df.to_string(index=False))
+    
+    print("\n" + "="*80)
+    print(" STATISTICHE DESCRITTIVE DELLE SIMILARITÀ (ArcFace)")
+    print("="*80)
+    print(df[["sim_orig_vs_anonymized", "sim_orig_vs_adversarial_pipe"]].describe().to_string())
+    print("="*80)
 
 if __name__ == "__main__":
     main()
