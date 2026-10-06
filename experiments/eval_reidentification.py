@@ -1,22 +1,53 @@
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-# --- PATCH DI EMERGENZA (DEVE ESSERE LA PRIMA COSA IN ABSOLUTE) ---
-import inspect
-_orig_getsourcefile = inspect.getsourcefile
-def _patched_getsourcefile(object):
-    try:
-        if type(object).__name__ == 'DummyModule':
-            return None
-        return _orig_getsourcefile(object)
-    except Exception:
-        return None
-inspect.getsourcefile = _patched_getsourcefile
-# -----------------------------------------------------------------
+
 import os
 import inspect
 import types
 import subprocess
+
+# --- INSTALLAZIONE AUTOMATICA DIPENDENZE (INSIGHTFACE & ONNXRUNTIME) ---
+try:
+    import insightface
+    from insightface.app import FaceAnalysis
+    HAS_INSIGHTFACE = True
+except ImportError:
+    print("[INFO] InsightFace non trovato. Installazione automatica in corso...")
+    try:
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "insightface", "onnxruntime-gpu"])
+        import insightface
+        from insightface.app import FaceAnalysis
+        HAS_INSIGHTFACE = True
+        print("[SUCCESSO] InsightFace installato correttamente.")
+    except Exception as e:
+        print(f"[WARNING] Impossibile installare automaticamente InsightFace: {e}")
+        HAS_INSIGHTFACE = False
+
+# --- PATCH DI SICUREZZA ROBUSTA PER PYTHON 3.12 (GETFILE & GETSOURCEFILE) ---
+_old_getfile = inspect.getfile
+def _safe_getfile(object):
+    try:
+        f = _old_getfile(object)
+        if not isinstance(f, (str, bytes, os.PathLike)):
+            return __file__
+        return f
+    except Exception:
+        return __file__
+inspect.getfile = _safe_getfile
+
+_old_getsourcefile = inspect.getsourcefile
+def _safe_getsourcefile(object):
+    try:
+        f = _old_getsourcefile(object)
+        if f is not None and not isinstance(f, (str, bytes, os.PathLike)):
+            return None
+        return f
+    except Exception:
+        return None
+inspect.getsourcefile = _safe_getsourcefile
+# --------------------------------------------------------------------------
+
 import argparse
 import torch
 import torch.nn.functional as F
