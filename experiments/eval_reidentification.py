@@ -1,7 +1,18 @@
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-
+# --- PATCH DI EMERGENZA (DEVE ESSERE LA PRIMA COSA IN ABSOLUTE) ---
+import inspect
+_orig_getsourcefile = inspect.getsourcefile
+def _patched_getsourcefile(object):
+    try:
+        if type(object).__name__ == 'DummyModule':
+            return None
+        return _orig_getsourcefile(object)
+    except Exception:
+        return None
+inspect.getsourcefile = _patched_getsourcefile
+# -----------------------------------------------------------------
 import os
 import inspect
 import types
