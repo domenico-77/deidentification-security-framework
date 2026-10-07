@@ -1,4 +1,4 @@
-# De-identification Security Evaluation Framework
+# Offensive De-identification Security Evaluation Framework
 
 Framework modulare in PyTorch progettato per la valutazione della robustezza di pipelines di anonimizzazione e face de-identification.
 (Al momento sono implementati e testati gli attacchi FGSM, PGD e Deepfool su Deeprivacy2 come modello di anonimizzazione e face de-identification)
