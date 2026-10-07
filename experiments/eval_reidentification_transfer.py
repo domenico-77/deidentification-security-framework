@@ -77,6 +77,9 @@ class TransferEvaluator(BaseEvaluator):
             try:
                 # Assicurati che il modulo retinaface sia disponibile nel path o nel progetto
                 from detectors.retinaface import RetinaFaceDetector
+            except ImportError as ie:
+                print(f"[ERROR] Impossibile trovare il modulo RetinaFace in detectors.retinaface.retinaface: {ie}")
+                raise ie
                 # Inizializzazione RetinaFace con configurazione MobileNet0.25 (come i tuoi pesi)
                 cfg = {
                     'name': 'mobilenet0.25',
