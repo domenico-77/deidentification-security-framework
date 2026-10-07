@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import ultralytics
 from detectors.base_detector import BaseDetector
 
 class YoloFaceDetector(BaseDetector):
