@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
-import subprocess
-import sys
+from ultralytics import YOLO
 from detectors.base_detector import BaseDetector
 
 class YoloFaceDetector(BaseDetector):
@@ -12,15 +11,8 @@ class YoloFaceDetector(BaseDetector):
     def __init__(self, weights_path: str, device: torch.device):
         self.device = device
         
-        # Tentativo di importazione e installazione dinamica di ultralytics
         try:
-            from ultralytics import YOLO
-        except ImportError:
-            print("[INFO] Libreria 'ultralytics' non trovata. Installazione automatica in corso...")
-            subprocess.check_call([sys.executable, "-m", "pip", "install", "ultralytics"])
-            from ultralytics import YOLO
-            
-        try:
+            # Caricamento diretto del modello dai pesi locali specificati
             self.yolo_instance = YOLO(weights_path)
             # Estraiamo il modulo PyTorch sottostante per il calcolo dei gradienti
             self.net = self.yolo_instance.model.to(self.device).eval()
