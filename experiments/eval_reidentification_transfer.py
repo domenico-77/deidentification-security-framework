@@ -2,7 +2,7 @@ import sys
 from pathlib import Path
 # Aggiungiamo la root del progetto al path per importare eval_reidentification e i moduli degli attacchi
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
+import os
 import argparse
 import torch
 import pandas as pd
