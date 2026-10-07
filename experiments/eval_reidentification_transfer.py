@@ -76,7 +76,7 @@ class TransferEvaluator(BaseEvaluator):
         elif args.surrogate == "retinaface":
             try:
                 # Assicurati che il modulo retinaface sia disponibile nel path o nel progetto
-                from models.retinaface.retinaface import RetinaFace
+                from detectors.retinaface import RetinaFaceDetector
                 # Inizializzazione RetinaFace con configurazione MobileNet0.25 (come i tuoi pesi)
                 cfg = {
                     'name': 'mobilenet0.25',
