@@ -44,6 +44,10 @@ class YoloFaceDetector(BaseDetector):
 
     def compute_adversarial_loss(self, image_tensor: torch.Tensor) -> torch.Tensor:
         """Calcola la loss basata sull'output del modello sottostante per il gradiente."""
+        if image_tensor.dim() == 5:
+            b, n, c, h, w = image_tensor.shape
+            image_tensor = image_tensor.view(b * n, c, h, w)
+            
         outputs = self.net(image_tensor)
         loss = torch.tensor(0.0, device=self.device, requires_grad=True)
         
@@ -58,4 +62,7 @@ class YoloFaceDetector(BaseDetector):
 
     def __call__(self, x):
         """Forward pass diretto sul modello PyTorch interno per l'attacco."""
+        if x.dim() == 5:
+            b, n, c, h, w = x.shape
+            x = x.view(b * n, c, h, w)
         return self.net(x)
