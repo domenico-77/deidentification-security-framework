@@ -46,7 +46,7 @@ class TransferEvaluator(BaseEvaluator):
         parser = argparse.ArgumentParser(description="Valutazione Identity Leakage & Re-identification (Transfer Mode)")
         parser.add_argument("--attack", type=str, default="pgd", choices=["fgsm", "bim", "pgd", "uap", "deepfool"], help="Tipo di attacco transfer da testare")
         parser.add_argument("--model", type=str, default="deeprivacy2", choices=["deeprivacy2"], help="Modello di anonimizzazione target")
-        parser.add_argument("--surrogate", type=str, default="retinaface", choices=["retinaface"], help="Modello surrogato per il calcolo dei gradienti")
+        parser.add_argument("--surrogate", type=str, default="retinaface", choices=["retinaface", "yolo"], help="Modello surrogato per il calcolo dei gradienti")
         parser.add_argument("--surrogate_weights", type=str, default="", help="Percorso ai pesi del modello surrogato (es. .pt o .pth)")
         parser.add_argument("--epsilon", type=float, default=8.0, help="Valore di epsilon per la perturbazione")
         parser.add_argument("--num_samples", type=int, default=30, help="Numero di campioni del dataset da valutare")
