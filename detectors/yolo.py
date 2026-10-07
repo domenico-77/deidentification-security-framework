@@ -20,6 +20,13 @@ class YoloFaceDetector(BaseDetector):
             print(f"[ERROR] Impossibile caricare il modello YOLO da {weights_path}: {e}")
             raise e
 
+    def to(self, device):
+        """Supporta il metodo .to() richiesto dal framework di attacco."""
+        self.device = device
+        if hasattr(self, 'net') and self.net is not None:
+            self.net = self.net.to(device)
+        return self
+
     def count_detections(self, image_tensor: torch.Tensor) -> int:
         """Restituisce il numero di volti rilevati tramite predizione YOLO."""
         with torch.no_grad():
