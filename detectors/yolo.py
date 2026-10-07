@@ -27,6 +27,11 @@ class YoloFaceDetector(BaseDetector):
             self.net = self.net.to(device)
         return self
 
+    def zero_grad(self):
+        """Supporta il metodo .zero_grad() richiesto dal framework di attacco."""
+        if hasattr(self, 'net') and self.net is not None:
+            self.net.zero_grad()
+
     def count_detections(self, image_tensor: torch.Tensor) -> int:
         """Restituisce il numero di volti rilevati tramite predizione YOLO."""
         with torch.no_grad():
