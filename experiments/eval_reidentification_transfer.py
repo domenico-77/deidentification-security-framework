@@ -25,11 +25,14 @@ class TransferEvaluator(BaseEvaluator):
         attack_name = attack_name.lower()
         if attack_name == "pgd":
             return TransferPGDAttack(
+                detector=detector_wrapper,          
                 detector_wrapper=detector_wrapper,
                 dsfd_net=dsfd_net,
                 mean_tensor=mean_tensor,
                 surrogate_net=surrogate_net,
-                device=self.device
+                device=self.device,
+                use_momentum=True,
+                use_di=True
             )
         elif attack_name == "bim":
             # Posto per futuri attacchi transfer (es. BIM Transfer)
