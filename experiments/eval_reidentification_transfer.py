@@ -54,7 +54,7 @@ class TransferEvaluator(BaseEvaluator):
 
         print(f"\n[INFO] Avvio Identity Leakage Analysis & Re-identification (TRANSFER MODE)")
         print(f" -> Attacco: {args.attack.upper()} (Epsilon: {args.epsilon})")
-        print(f" -> Surrogato: {args.surrogate_type.upper()} (Pesi: {args.surrogate_weights or 'Default/None'})")
+        print(f" -> Surrogato: {args.surrogate.upper()} (Pesi: {args.surrogate_weights or 'Default/None'})")
         print(f" -> Target Anonimizzazione: {args.model}")
         print(f" -> Dispositivo: {self.device}")
 
@@ -63,8 +63,8 @@ class TransferEvaluator(BaseEvaluator):
 
         # 2. Caricamento del Modello Surrogato
         surrogate_net = None
-        print(f"[INFO] Caricamento modello surrogato ({args.surrogate_type})...")
-        if args.surrogate_type == "yolo":
+        print(f"[INFO] Caricamento modello surrogato ({args.surrogate})...")
+        if args.surrogate == "yolo":
             try:
                 from ultralytics import YOLO
                 yolo_model = YOLO(args.surrogate_weights if args.surrogate_weights else "yolov8n-face.pt")
@@ -72,7 +72,7 @@ class TransferEvaluator(BaseEvaluator):
                 print("[SUCCESSO] Modello surrogato YOLO caricato correttamente.")
             except Exception as e:
                 print(f"[WARNING] Impossibile caricare YOLO nativo: {e}")
-        elif args.surrogate_type == "retinaface":
+        elif args.surrogate == "retinaface":
             raise NotImplementedError("Caricamento RetinaFace surrogato non ancora configurato.")
 
         # 3. Istanziazione dell'attacco di trasferimento tramite factory personalizzata
@@ -167,7 +167,7 @@ class TransferEvaluator(BaseEvaluator):
             results.append({
                 "sample_id": idx,
                 "attack": f"transfer_{args.attack}",
-                "surrogate": args.surrogate_type,
+                "surrogate": args.surrogate,
                 "epsilon": args.epsilon,
                 "detector_evaded": success,
                 "pipeline_behavior": "Bypassed (Original face retained)" if success else "Anonymized (Face replaced)",
@@ -180,7 +180,7 @@ class TransferEvaluator(BaseEvaluator):
         output_dir = f"./results_identity_{args.model}_transfer"
         os.makedirs(output_dir, exist_ok=True)
         
-        output_csv = os.path.join(output_dir, f"identity_leakage_similarity_{args.attack}_surrogate_{args.surrogate_type}_eps{args.epsilon}.csv")
+        output_csv = os.path.join(output_dir, f"identity_leakage_similarity_{args.attack}_surrogate_{args.surrogate}_eps{args.epsilon}.csv")
         df.to_csv(output_csv, index=False)
         print(f"\n[SUCCESSO] Analisi di similarità transfer completata. Report salvato in: {output_csv}")
 
