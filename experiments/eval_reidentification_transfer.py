@@ -73,7 +73,7 @@ class TransferEvaluator(BaseEvaluator):
             except Exception as e:
                 print(f"[WARNING] Impossibile caricare YOLO nativo: {e}")
                 
-        elif args.surrogate_type == "retinaface":
+        elif args.surrogate == "retinaface":
             try:
                 # Assicurati che il modulo retinaface sia disponibile nel path o nel progetto
                 from models.retinaface.retinaface import RetinaFace
