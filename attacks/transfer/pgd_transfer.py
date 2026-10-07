@@ -39,7 +39,8 @@ class TransferPGDAttack(PGDAttack):
         """
         if not self.use_di or random.random() > self.di_prob:
             return x_tensor
-
+        if x_tensor.dim() == 3:
+            x_tensor = x_tensor.unsqueeze(0)
         _, _, h, w = x_tensor.shape
         
         # Scegli una dimensione casuale per il resize (es. tra l'85% e il 100% dell'originale)
