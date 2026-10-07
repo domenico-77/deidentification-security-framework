@@ -72,8 +72,39 @@ class TransferEvaluator(BaseEvaluator):
                 print("[SUCCESSO] Modello surrogato YOLO caricato correttamente.")
             except Exception as e:
                 print(f"[WARNING] Impossibile caricare YOLO nativo: {e}")
-        elif args.surrogate == "retinaface":
-            raise NotImplementedError("Caricamento RetinaFace surrogato non ancora configurato.")
+                
+        elif args.surrogate_type == "retinaface":
+            try:
+                # Assicurati che il modulo retinaface sia disponibile nel path o nel progetto
+                from models.retinaface.retinaface import RetinaFace
+                # Inizializzazione RetinaFace con configurazione MobileNet0.25 (come i tuoi pesi)
+                cfg = {
+                    'name': 'mobilenet0.25',
+                    'min_sizes': [[16, 32], [64, 128], [256, 512]],
+                    'steps': [8, 16, 32],
+                    'variance': [0.1, 0.2],
+                    'clip': False,
+                    'loc_weight': 2.0,
+                    'cls_weight': 1.0,
+                    'landm_weight': 1.0,
+                    'pretrain': False
+                }
+                surrogate_net = RetinaFace(cfg=cfg, phase='test')
+                
+                weights_path = args.surrogate_weights if args.surrogate_weights else "/kaggle/input/datasets/domenicovicenti/retinaface-weights/mobilenet0.25_Final.pth"
+                checkpoint = torch.load(weights_path, map_location=self.device)
+                
+                if 'state_dict' in checkpoint:
+                    checkpoint = checkpoint['state_dict']
+                # Rimuove eventuali prefissi 'module.' salvati da DataParallel
+                new_state_dict = {k.replace('module.', ''): v for k, v in checkpoint.items()}
+                surrogate_net.load_state_dict(new_state_dict, strict=False)
+                
+                surrogate_net = surrogate_net.to(self.device).eval()
+                print(f"[SUCCESSO] RetinaFace caricato correttamente da: {weights_path}")
+            except Exception as e:
+                print(f"[ERROR] Errore nel caricamento dei pesi di RetinaFace: {e}")
+                raise e
 
         # 3. Istanziazione dell'attacco di trasferimento tramite factory personalizzata
         attack = self.get_attack_instance(
