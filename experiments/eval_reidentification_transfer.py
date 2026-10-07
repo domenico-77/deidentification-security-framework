@@ -66,12 +66,14 @@ class TransferEvaluator(BaseEvaluator):
         print(f"[INFO] Caricamento modello surrogato ({args.surrogate})...")
         if args.surrogate == "yolo":
             try:
-                from ultralytics import YOLO
-                yolo_model = YOLO(args.surrogate_weights if args.surrogate_weights else "yolov8n-face.pt")
-                surrogate_net = yolo_model.model.to(self.device).eval()
-                print("[SUCCESSO] Modello surrogato YOLO caricato correttamente.")
+                from detectors.yolo import YoloFaceDetector
+                weights_path = args.surrogate_weights if args.surrogate_weights else "yolov8n-face.pt"
+                yolo_detector = YoloFaceDetector(weights_path=weights_path, device=self.device)
+                surrogate_net = yolo_detector
+                print(f"[SUCCESSO] YOLO caricato correttamente da: {weights_path}")
             except Exception as e:
-                print(f"[WARNING] Impossibile caricare YOLO nativo: {e}")
+                print(f"[ERROR] Errore nel caricamento di YOLO: {e}")
+                raise e
                 
         elif args.surrogate == "retinaface":
             try:
