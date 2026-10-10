@@ -16,12 +16,12 @@ class RetinaFaceDetector(BaseDetector):
     def _load_retinaface(self, weights_path: str) -> nn.Module:
         """Inizializza l'architettura, installando il pacchetto se assente, e carica i pesi."""
         try:
-            from retinaface.net import RetinaFace
+            from retinaface import RetinaFace
         except ImportError:
             print("[INFO] Pacchetto 'retinaface-pytorch' non trovato. Installazione automatica in corso...")
             try:
                 subprocess.check_call([sys.executable, "-m", "pip", "install", "retinaface-pytorch"])
-                from retinaface.net import RetinaFace
+                from face_detection import RetinaFace
             except Exception as install_err:
                 print(f"[ERROR] Impossibile installare automaticamente retinaface-pytorch: {install_err}")
                 raise install_err
