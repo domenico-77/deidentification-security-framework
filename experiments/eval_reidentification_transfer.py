@@ -34,10 +34,13 @@ class TransferEvaluator(BaseEvaluator):
                 use_momentum=True,
                 use_di=True
             )
+        elif attack_name == "fgsm":
+            raise NotImplementedError("UAP Transfer non ancora implementato.")
         elif attack_name == "bim":
-            # Posto per futuri attacchi transfer (es. BIM Transfer)
             raise NotImplementedError("BIM Transfer non ancora implementato.")
         elif attack_name == "uap":
+            raise NotImplementedError("UAP Transfer non ancora implementato.")
+        elif attack_name == "deepfool":
             raise NotImplementedError("UAP Transfer non ancora implementato.")
         else:
             raise ValueError(f"Attacco transfer non supportato o non valido: {attack_name}")
