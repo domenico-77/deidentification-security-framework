@@ -7,7 +7,7 @@ import argparse
 import torch
 import pandas as pd
 from tqdm import tqdm
-#ciao
+
 from eval_reidentification import BaseEvaluator
 from attacks.transfer.pgd_transfer import TransferPGDAttack
 from attacks.transfer.fgsm_transfer import TransferFGSMAttack
@@ -87,7 +87,7 @@ class TransferEvaluator(BaseEvaluator):
         if args.surrogate == "yolo":
             try:
                 from detectors.yolo import YoloFaceDetector
-                weights_path = args.surrogate_weights if args.surrogate_weights else "yolov8n-face.pt"
+                weights_path = args.surrogate_weights
                 yolo_detector = YoloFaceDetector(weights_path=weights_path, device=self.device)
                 surrogate_net = yolo_detector
                 print(f"[SUCCESSO] YOLO caricato correttamente da: {weights_path}")
@@ -97,35 +97,13 @@ class TransferEvaluator(BaseEvaluator):
                 
         elif args.surrogate == "retinaface":
             try:
-                # Assicurati che il modulo retinaface sia disponibile nel path o nel progetto
                 from detectors.retinaface import RetinaFaceDetector
-            except ImportError as ie:
-                print(f"[ERROR] Impossibile trovare il modulo RetinaFace in detectors.retinaface.retinaface: {ie}")
-                raise ie
-                # Inizializzazione RetinaFace con configurazione MobileNet0.25 (come i tuoi pesi)
-                cfg = {
-                    'name': 'mobilenet0.25',
-                    'min_sizes': [[16, 32], [64, 128], [256, 512]],
-                    'steps': [8, 16, 32],
-                    'variance': [0.1, 0.2],
-                    'clip': False,
-                    'loc_weight': 2.0,
-                    'cls_weight': 1.0,
-                    'landm_weight': 1.0,
-                    'pretrain': False
-                }
-                surrogate_net = RetinaFace(cfg=cfg, phase='test')
+                weights_path = args.surrogate_weights
                 
-                weights_path = args.surrogate_weights if args.surrogate_weights else "/kaggle/input/datasets/domenicovicenti/retinaface-weights/mobilenet0.25_Final.pth"
-                checkpoint = torch.load(weights_path, map_location=self.device)
-                
-                if 'state_dict' in checkpoint:
-                    checkpoint = checkpoint['state_dict']
-                # Rimuove eventuali prefissi 'module.' salvati da DataParallel
-                new_state_dict = {k.replace('module.', ''): v for k, v in checkpoint.items()}
-                surrogate_net.load_state_dict(new_state_dict, strict=False)
-                
+                retina_detector = RetinaFaceDetector(weights_path=weights_path, device=self.device)
+                surrogate_net = retina_detector.net if hasattr(retina_detector, 'net') else retina_detector
                 surrogate_net = surrogate_net.to(self.device).eval()
+                
                 print(f"[SUCCESSO] RetinaFace caricato correttamente da: {weights_path}")
             except Exception as e:
                 print(f"[ERROR] Errore nel caricamento dei pesi di RetinaFace: {e}")
