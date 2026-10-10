@@ -4,8 +4,8 @@ from attacks.fgsm import FGSMAttack
 class TransferFGSMAttack(FGSMAttack):
     """
     Implementazione dell'attacco FGSM in modalità transfer,
-    che eredita da FGSMAttack ma calcola i gradienti e l'evasione 
-    sul modello surrogato (es. YOLO) anziché sul detector target.
+    che eredita da FGSMAttack, calcola i gradienti sul modello surrogato (es. YOLO)
+    e verifica il successo dell'evasione sul detector target reale.
     """
     def __init__(self, detector=None, detector_wrapper=None, dsfd_net=None, mean_tensor=None, surrogate_net=None, device: torch.device = None, **kwargs):
         super().__init__(detector=detector, detector_wrapper=detector_wrapper, dsfd_net=dsfd_net, mean_tensor=mean_tensor, device=device)
@@ -43,7 +43,7 @@ class TransferFGSMAttack(FGSMAttack):
         if img_adv.grad is not None and torch.abs(img_adv.grad).sum().item() > 0:
             grad_sign = img_adv.grad.sign()
             if grad_sign.dim() == 5 and img_adv.dim() == 4:
-                grad_sign = grad_sign.mean(dim=1) # Gestione eventuali dimensioni multiple di trasformazione
+                grad_sign = grad_sign.mean(dim=1)
                 
             with torch.no_grad():
                 img_adv = img_adv - epsilon_norm * grad_sign
@@ -52,23 +52,17 @@ class TransferFGSMAttack(FGSMAttack):
                 eta = torch.clamp(eta, min=-epsilon_norm, max=epsilon_norm)
                 img_adv = torch.clamp(img_orig_tensor + eta, min=0.0, max=1.0)
                 
-            # Ri-portiamo l'immagine in scala [0, 255] per il controllo sul detector target se richiesto
+            # Ri-portiamo l'immagine in scala [0, 255] per il controllo sul detector target
             img_adv_eval = img_adv * 255.0
 
-            # Verifica dell'evasione sul detector target (o tramite conteggio del surrogato)
+            # Verifica dell'evasione sul DETECTOR TARGET REALE (DSFD)
             with torch.no_grad():
-                if hasattr(self.surrogate_net, 'count_detections'):
-                    det_count = self.surrogate_net.count_detections(img_adv.unsqueeze(0) if img_adv.dim() == 3 else img_adv)
-                    if det_count == 0:
-                        success = True
-                        success_iteration = 1
-                else:
-                    detector_input = img_adv_eval.detach().byte().float()
-                    detections = self.detector(detector_input)
-                    chk_faces = len(detections[0]) if (len(detections) > 0 and detections[0] is not None) else 0
-                    if chk_faces == 0:
-                        success = True
-                        success_iteration = 1
+                detector_input = img_adv_eval.detach().byte().float()
+                detections = self.detector(detector_input)
+                chk_faces = len(detections[0]) if (len(detections) > 0 and detections[0] is not None) else 0
+                if chk_faces == 0:
+                    success = True
+                    success_iteration = 1
 
         # Riconversione finale in scala [0, 255] coerente con il framework
         if img_adv.max() <= 1.0:
