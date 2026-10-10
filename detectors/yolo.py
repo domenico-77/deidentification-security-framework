@@ -58,7 +58,16 @@ class YoloFaceDetector(BaseDetector):
     def count_detections(self, image_tensor: torch.Tensor) -> int:
         """Restituisce il numero di volti rilevati tramite predizione YOLO standard."""
         with torch.no_grad():
-            results = self.yolo_instance(image_tensor, verbose=False)
+            # Assicuriamoci che le dimensioni siano divisibili per 32 (es. ridimensionando a 256x256 o 640x640)
+            # Oppure utilizziamo un resize dinamico con torch.nn.functional.interpolate
+            if image_tensor.shape[-1] != 256 or image_tensor.shape[-2] != 256:
+                image_tensor_resized = torch.nn.functional.interpolate(
+                    image_tensor, size=(256, 256), mode='bilinear', align_corners=False
+                )
+            else:
+                image_tensor_resized = image_tensor
+
+            results = self.yolo_instance(image_tensor_resized, verbose=False)
             count = 0
             for r in results:
                 if r.boxes is not None:
