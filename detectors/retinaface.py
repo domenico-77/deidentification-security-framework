@@ -10,9 +10,9 @@ if str(root_dir) not in sys.path:
     sys.path.insert(0, str(root_dir))
 
 try:
-    from models.retinaface.net import RetinaFace
+    from models.retinaface import RetinaFace
 except ImportError as e:
-    print(f"[ERROR] Impossibile importare RetinaFace da models.retinaface.net: {e}")
+    print(f"[ERROR] Impossibile importare RetinaFace da models.retinaface: {e}")
     raise e
 
 class RetinaFaceDetector(BaseDetector):
