@@ -1,5 +1,7 @@
 import torch
 import torch.nn as nn
+import sys
+from pathlib import Path
 from detectors.base_detector import BaseDetector
 
 class RetinaFaceDetector(BaseDetector):
@@ -13,8 +15,13 @@ class RetinaFaceDetector(BaseDetector):
 
     def _load_retinaface(self, weights_path: str) -> nn.Module:
         """Inizializza l'architettura e carica i pesi."""
+        # Aggiungiamo la cartella di RetinaFace al sys.path affinché Python risolva i suoi moduli interni (es. models.net)
+        retina_path = Path("/kaggle/working/deidentification-security-framework/models/retinaface")
+        if str(retina_path) not in sys.path:
+            sys.path.insert(0, str(retina_path))
+
         try:
-            from models.retinaface.models.retinaface import RetinaFace
+            from models.retinaface import RetinaFace
         except ImportError as e:
             print(f"[ERROR] Impossibile importare RetinaFace: {e}")
             raise e
