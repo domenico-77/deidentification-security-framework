@@ -21,7 +21,7 @@ class RetinaFaceDetector(BaseDetector):
             print("[INFO] Pacchetto 'retinaface-pytorch' non trovato. Installazione automatica in corso...")
             try:
                 subprocess.check_call([sys.executable, "-m", "pip", "install", "retinaface-pytorch"])
-                from face_detection import RetinaFace
+                from face_detection import retinaface
             except Exception as install_err:
                 print(f"[ERROR] Impossibile installare automaticamente retinaface-pytorch: {install_err}")
                 raise install_err
