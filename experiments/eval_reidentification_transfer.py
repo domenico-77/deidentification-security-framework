@@ -35,7 +35,15 @@ class TransferEvaluator(BaseEvaluator):
                 use_di=True
             )
         elif attack_name == "fgsm":
-            raise NotImplementedError("UAP Transfer non ancora implementato.")
+            return TransferFGSMAttack(
+                detector=detector_wrapper,          
+                detector_wrapper=detector_wrapper,
+                dsfd_net=dsfd_net,
+                mean_tensor=mean_tensor,
+                surrogate_net=surrogate_net,
+                device=self.device,
+                epsilon=epsilon
+            )
         elif attack_name == "bim":
             raise NotImplementedError("BIM Transfer non ancora implementato.")
         elif attack_name == "uap":
