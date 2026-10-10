@@ -14,10 +14,18 @@ class RetinaFaceDetector(BaseDetector):
     def _load_retinaface(self, weights_path: str) -> nn.Module:
         """Inizializza l'architettura e carica i pesi."""
         try:
-            # Se preferisci importare l'architettura da una libreria esterna o da un file locale
-            # (Assicurati di avere il codice dell'architettura RetinaFace disponibile o importabile)
-            from models.retinaface.retinaface import RetinaFace # Oppure adatta l'import se inserisci il codice qui
-            
+            # Tentativo di importazione da librerie esterne comuni o pip package
+            try:
+                from retinaface.net import RetinaFace
+            except ImportError:
+                try:
+                    from models.retinaface.retinaface import RetinaFace
+                except ImportError:
+                    # Definizione minimale o caricamento tramite torchvision se disponibile
+                    import torchvision.models as models
+                    # Fallback robusto se il pacchetto retinaface non è strutturato come modulo locale
+                    raise ImportError("Impossibile trovare la definizione della classe RetinaFace. Assicurati che il modulo sia installato o presente.")
+
             cfg = {
                 'name': 'mobilenet0.25',
                 'min_sizes': [[16, 32], [64, 128], [256, 512]],
@@ -46,12 +54,9 @@ class RetinaFaceDetector(BaseDetector):
         """Restituisce il numero di volti rilevati."""
         with torch.no_grad():
             out = self.net(image_tensor)
-            # Gestione in base all'output standard di RetinaFace (loc, conf, landm)
-            # Qui puoi contare i box con confidenza superiore a una soglia (es. 0.5)
             if isinstance(out, tuple) and len(out) >= 2:
-                conf = out[1] # solitamente il secondo tensore contiene i punteggi di confidenza
+                conf = out[1]
                 if conf.dim() == 3:
-                    # Filtra per confidenza > soglia
                     valid = (conf[:, :, 1] > 0.5).sum().item()
                     return int(valid)
         return 0
@@ -61,7 +66,6 @@ class RetinaFaceDetector(BaseDetector):
         out = self.net(image_tensor)
         loss = torch.tensor(0.0, device=self.device, requires_grad=True)
         
-        # Massimizziamo i punteggi di confidenza dei volti rilevati per forzare il gradiente
         if isinstance(out, tuple):
             for t in out:
                 if isinstance(t, torch.Tensor) and t.requires_grad:
