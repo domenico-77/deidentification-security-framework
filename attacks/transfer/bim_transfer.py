@@ -2,6 +2,10 @@ import torch
 from attacks.bim import BIMAttack
 
 class TransferBIMAttack(BIMAttack):
+    """
+    Implementazione dell'attacco BIM in modalità transfer,
+    con gestione unificata dell'output del surrogato (YOLO / RetinaFace).
+    """
     def __init__(self, detector=None, detector_wrapper=None, dsfd_net=None, mean_tensor=None, surrogate_net=None, device: torch.device = None, **kwargs):
         super().__init__(detector=detector, detector_wrapper=detector_wrapper, dsfd_net=dsfd_net, mean_tensor=mean_tensor, device=device)
         self.surrogate_net = surrogate_net.to(self.device) if surrogate_net is not None else None
@@ -26,7 +30,25 @@ class TransferBIMAttack(BIMAttack):
             if hasattr(self.surrogate_net, 'zero_grad'):
                 self.surrogate_net.zero_grad()
 
-            loss = self.surrogate_net.compute_adversarial_loss(img_adv.unsqueeze(0) if img_adv.dim() == 3 else img_adv)
+            input_surrogate = img_adv.unsqueeze(0) if img_adv.dim() == 3 else img_adv
+            surrogate_out = self.surrogate_net(input_surrogate)
+
+            # Calcolo della loss unificato (uguale a PGD)
+            loss = torch.tensor(0.0, device=self.device, requires_grad=True)
+            if isinstance(surrogate_out, (list, tuple)):
+                for t in surrogate_out:
+                    if isinstance(t, torch.Tensor):
+                        loss = loss + torch.relu(t).sum()
+            elif hasattr(surrogate_out, "boxes") and surrogate_out.boxes is not None:
+                boxes = surrogate_out.boxes
+                if boxes.conf is not None and len(boxes.conf) > 0:
+                    loss = boxes.conf.sum()
+                else:
+                    loss = img_adv.sum() * 0.0
+            elif isinstance(surrogate_out, torch.Tensor):
+                loss = torch.relu(surrogate_out).sum()
+            else:
+                loss = img_adv.sum() * 0.0
 
             if img_adv.grad is not None:
                 img_adv.grad.zero_()
@@ -45,13 +67,10 @@ class TransferBIMAttack(BIMAttack):
 
             img_adv_eval = img_adv * 255.0
 
-            # VERIFICA REALE SUL TARGET DETECTOR (DSFD / Detector Wrapper)
             with torch.no_grad():
                 detector_input = img_adv_eval.detach().byte().float()
                 detections = self.detector(detector_input)
                 chk_faces = len(detections[0]) if (len(detections) > 0 and detections[0] is not None) else 0
-                
-                # Se il target detector non rileva più il volto, l'attacco è realmente riuscito
                 if chk_faces == 0:
                     success = True
                     success_iteration = i + 1
