@@ -11,6 +11,7 @@ from tqdm import tqdm
 from eval_reidentification import BaseEvaluator
 from attacks.transfer.pgd_transfer import TransferPGDAttack
 from attacks.transfer.fgsm_transfer import TransferFGSMAttack
+from attacks.transfer.bim_transfer import TransferBIMAttack
 from data_loaders.lfw import LFWDataset
 
 class TransferEvaluator(BaseEvaluator):
