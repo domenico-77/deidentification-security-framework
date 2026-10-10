@@ -1,15 +1,19 @@
 import torch
 import torch.nn as nn
-import subprocess
 import sys
+from pathlib import Path
 from detectors.base_detector import BaseDetector
 
+# Aggiungiamo la root del progetto al path (se non già presente) per garantire che 'models' sia visibile
+root_dir = Path(__file__).resolve().parent.parent
+if str(root_dir) not in sys.path:
+    sys.path.insert(0, str(root_dir))
+
 try:
-    from retinaface.net import RetinaFace
-except ImportError:
-    print("[INFO] Libreria 'retinaface-pytorch' non trovata. Installazione automatica in corso...")
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "retinaface-pytorch"])
-    from retinaface.net import RetinaFace
+    from models.retinaface.net import RetinaFace
+except ImportError as e:
+    print(f"[ERROR] Impossibile importare RetinaFace da models.retinaface.net: {e}")
+    raise e
 
 class RetinaFaceDetector(BaseDetector):
     """
@@ -57,8 +61,6 @@ class RetinaFaceDetector(BaseDetector):
         Registra un forward hook su un blocco intermedio della backbone o FPN
         per catturare i tensori intermedi ed evitare problemi di gradiente sulla head.
         """
-        # In RetinaFace MobileNet, self.net.body (MobileNetV1) o fpn restituiscono liste di feature.
-        # Agganciamo un hook sull'ultimo stadio della body/backbone.
         if hasattr(self.net, 'body') and hasattr(self.net.body, 'stage3'):
             target_layer = self.net.body.stage3
             
@@ -85,11 +87,9 @@ class RetinaFaceDetector(BaseDetector):
                 image_tensor = image_tensor.view(b * n, c, h, w)
 
             out = self.net(image_tensor)
-            # RetinaFace restituisce una tupla: (bbox_regressions, classifications, ldm_regressions)
             if isinstance(out, tuple) and len(out) >= 2:
-                conf = out[1] # Classificazioni / confidenze
+                conf = out[1]
                 if conf.dim() == 3:
-                    # Conta i box con probabilità di volto superiore a 0.5
                     valid = (conf[:, :, 1] > 0.5).sum().item()
                     return int(valid)
         return 0
@@ -103,17 +103,14 @@ class RetinaFaceDetector(BaseDetector):
             b, n, c, h, w = image_tensor.shape
             image_tensor = image_tensor.view(b * n, c, h, w)
             
-        # Forward pass (attiverà l'hook sullo strato intermedio se registrato)
         out = self.net(image_tensor)
         
-        # Se le feature intermedie sono state catturate dall'hook, usiamo la feature divergence
         if hasattr(self, 'extracted_features') and self.extracted_features is not None:
             if not hasattr(self, 'clean_features') or self.clean_features is None:
                 self.clean_features = self.extracted_features.detach()
             
             loss = -torch.nn.functional.mse_loss(self.extracted_features, self.clean_features)
         else:
-            # Fallback sull'output della tupla di RetinaFace
             loss = torch.tensor(0.0, device=self.device, requires_grad=True)
             if isinstance(out, tuple):
                 for t in out:
