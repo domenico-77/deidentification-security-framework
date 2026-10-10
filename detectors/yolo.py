@@ -1,7 +1,15 @@
 import torch
 import torch.nn as nn
-from ultralytics import YOLO
+import subprocess
+import sys
 from detectors.base_detector import BaseDetector
+
+try:
+    from ultralytics import YOLO
+except ImportError:
+    print("[INFO] Libreria 'ultralytics' non trovata. Installazione automatica in corso...")
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "ultralytics"])
+    from ultralytics import YOLO
 
 class YoloFaceDetector(BaseDetector):
     """
