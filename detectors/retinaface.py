@@ -1,31 +1,32 @@
 import torch
 import torch.nn as nn
+import subprocess
+import sys
 from detectors.base_detector import BaseDetector
 
 class RetinaFaceDetector(BaseDetector):
     """
     Wrapper per RetinaFace (MobileNet0.25) da utilizzare come modello surrogato 
-    per i Transfer Attack, implementando l'interfaccia BaseDetector.
+    per i Transfer Attack, con installazione automatica della dipendenza mancante.
     """
     def __init__(self, weights_path: str, device: torch.device):
         self.device = device
         self.net = self._load_retinaface(weights_path)
 
     def _load_retinaface(self, weights_path: str) -> nn.Module:
-        """Inizializza l'architettura e carica i pesi."""
+        """Inizializza l'architettura, installando il pacchetto se assente, e carica i pesi."""
         try:
-            # Tentativo di importazione da librerie esterne comuni o pip package
+            from retinaface.net import RetinaFace
+        except ImportError:
+            print("[INFO] Pacchetto 'retinaface-pytorch' non trovato. Installazione automatica in corso...")
             try:
+                subprocess.check_call([sys.executable, "-m", "pip", "install", "retinaface-pytorch"])
                 from retinaface.net import RetinaFace
-            except ImportError:
-                try:
-                    from models.retinaface.retinaface import RetinaFace
-                except ImportError:
-                    # Definizione minimale o caricamento tramite torchvision se disponibile
-                    import torchvision.models as models
-                    # Fallback robusto se il pacchetto retinaface non è strutturato come modulo locale
-                    raise ImportError("Impossibile trovare la definizione della classe RetinaFace. Assicurati che il modulo sia installato o presente.")
+            except Exception as install_err:
+                print(f"[ERROR] Impossibile installare automaticamente retinaface-pytorch: {install_err}")
+                raise install_err
 
+        try:
             cfg = {
                 'name': 'mobilenet0.25',
                 'min_sizes': [[16, 32], [64, 128], [256, 512]],
