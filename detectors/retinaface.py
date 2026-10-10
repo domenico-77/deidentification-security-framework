@@ -14,7 +14,7 @@ class RetinaFaceDetector(BaseDetector):
     def _load_retinaface(self, weights_path: str) -> nn.Module:
         """Inizializza l'architettura e carica i pesi."""
         try:
-            from models.retinaface.net import RetinaFace
+            from models.retinaface.models.retinaface import RetinaFace
         except ImportError as e:
             print(f"[ERROR] Impossibile importare RetinaFace: {e}")
             raise e
