@@ -1,4 +1,5 @@
 import torch
+from torch.utils.data import DataLoader, Subset
 from tqdm import tqdm
 from attacks.uap import UAPAttack
 
@@ -15,8 +16,15 @@ class TransferUAPAttack(UAPAttack):
     def fit(self, dataloader, epsilon=16.0, alpha=2, epochs=8, max_iter_per_img=15):
         """
         Calcola la perturbazione universale (UAP) guidata dal modello surrogato,
-        eseguendo l'intero addestramento su tutte le 8 epochs standard.
+        limitando automaticamente il dataloader a 25 campioni per garantire la coerenza dei batch
+        e completando l'addestramento sulle 8 epochs standard.
         """
+        if hasattr(dataloader, "dataset") and len(dataloader.dataset) > 25:
+            print("[INFO] Limitazione automatica del dataset UAP a 25 campioni per efficienza...")
+            subset_indices = list(range(min(25, len(dataloader.dataset))))
+            train_subset = Subset(dataloader.dataset, subset_indices)
+            dataloader = DataLoader(train_subset, batch_size=dataloader.batch_size if hasattr(dataloader, "batch_size") else 16, shuffle=True)
+
         if self.surrogate_net is None:
             print("[INFO] Nessun modello surrogato fornito per UAP. Esecuzione fit standard su DSFD.")
             return super().fit(dataloader, epsilon=epsilon, alpha=alpha, epochs=epochs, max_iter_per_img=max_iter_per_img)
