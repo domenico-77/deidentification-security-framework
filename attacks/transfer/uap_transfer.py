@@ -1,4 +1,5 @@
 import torch
+from torch.utils.data import DataLoader, Subset
 from tqdm import tqdm
 from attacks.uap import UAPAttack
 
@@ -29,8 +30,15 @@ class TransferUAPAttack(UAPAttack):
     def fit(self, dataloader, epsilon, alpha=2, epochs=8, max_iter_per_img=15):
         """
         Calcola la perturbazione universale (UAP) guidata dal modello surrogato,
-        utilizzando rigorosamente l'epsilon passato dinamicamente (senza fallback fissi).
+        troncando automaticamente il dataset a 25 campioni ed eseguendo le 8 epochs complete.
         """
+        # Forziamo il troncamento del dataset se troppo grande (evita gli 828 batch)
+        if hasattr(dataloader, "dataset") and len(dataloader.dataset) > 25:
+            print("[INFO] Limitazione automatica del dataset UAP a 25 campioni per efficienza...")
+            subset_indices = list(range(min(25, len(dataloader.dataset))))
+            train_subset = Subset(dataloader.dataset, subset_indices)
+            dataloader = DataLoader(train_subset, batch_size=dataloader.batch_size if hasattr(dataloader, "batch_size") else 16, shuffle=True)
+
         if self.surrogate_net is None:
             print("[WARNING] Surrogato non rilevato, esecuzione fit standard su DSFD.")
             return super().fit(dataloader, epsilon=epsilon, alpha=alpha, epochs=epochs, max_iter_per_img=max_iter_per_img)
@@ -58,13 +66,15 @@ class TransferUAPAttack(UAPAttack):
             
         self.uap_perturbation = torch.zeros((c, h, w), device=self.device, dtype=torch.float32)
 
-        print(f"[INFO] Inizio calcolo UAP Transfer guidato dal surrogato: epsilon={epsilon}, alpha={alpha}, epochs={epochs}")
+        # Forziamo esplicitamente a 8 le epochs a prescindere da cosa arriva dall'esterno
+        target_epochs = 8
+        print(f"[INFO] Inizio calcolo UAP Transfer guidato dal surrogato: epsilon={epsilon}, alpha={alpha}, epochs={target_epochs}")
 
-        for epoch in range(epochs):
+        for epoch in range(target_epochs):
             fooled_count = 0
             total_images = 0
 
-            for batch in tqdm(dataloader, desc=f"[UAP Transfer Epoch {epoch+1}/{epochs}]"):
+            for batch in tqdm(dataloader, desc=f"[UAP Transfer Epoch {epoch+1}/{target_epochs}]"):
                 images = batch[0] if isinstance(batch, (list, tuple)) else batch
                 images = images.to(self.device).float()
 
@@ -135,6 +145,6 @@ class TransferUAPAttack(UAPAttack):
                             fooled_count += 1
 
             fooling_rate = (fooled_count / total_images) * 100 if total_images > 0 else 0.0
-            print(f"[UAP Transfer Epoch {epoch+1}/{epochs}] Fooling Rate sul dataset: {fooling_rate:.2f}%")
+            print(f"[UAP Transfer Epoch {epoch+1}/{target_epochs}] Fooling Rate sul dataset: {fooling_rate:.2f}%")
 
         print("[INFO] Calcolo UAP Transfer guidato dal surrogato completato con successo!")
