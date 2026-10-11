@@ -1,5 +1,4 @@
 import torch
-from torch.utils.data import DataLoader, Subset
 from tqdm import tqdm
 from attacks.uap import UAPAttack
 
@@ -10,35 +9,33 @@ class TransferUAPAttack(UAPAttack):
     della perturbazione universale e verificando l'evasione sul target (DSFD).
     """
     def __init__(self, detector_wrapper, dsfd_net, mean_tensor, surrogate_net=None, device="cuda"):
-        # Assegnazione preventiva e blindata prima del super() per evitare sovrascritture della classe base
         self.device = torch.device(device) if isinstance(device, str) else device
-        self.surrogate_net = surrogate_net.to(self.device) if surrogate_net is not None else None
         self.detector_wrapper = detector_wrapper
         self.dsfd_net = dsfd_net.to(self.device) if dsfd_net is not None else None
         self.mean_tensor = mean_tensor.to(self.device) if mean_tensor is not None else None
+        
+        # Salvataggio immediato e sicuro del surrogato
+        self.surrogate_net = surrogate_net.to(self.device) if surrogate_net is not None else None
         self.uap_perturbation = None
 
-        # Inizializzazione sicura della classe base
         try:
             super().__init__(detector_wrapper=detector_wrapper, dsfd_net=dsfd_net, mean_tensor=mean_tensor, device=device)
         except Exception:
             pass
-            
-        # Re-impostiamo con forza il surrogato nel caso il super().__init__ lo abbia resettato
+
         if surrogate_net is not None:
             self.surrogate_net = surrogate_net.to(self.device)
 
-    def fit(self, dataloader, epsilon=16.0, alpha=2, epochs=8, max_iter_per_img=15):
+    def fit(self, dataloader, epsilon, alpha=2, epochs=8, max_iter_per_img=15):
         """
         Calcola la perturbazione universale (UAP) guidata dal modello surrogato,
-        garantendo l'esecuzione su 8 epochs complete e sul numero corretto di batch.
+        utilizzando rigorosamente l'epsilon passato dinamicamente (senza fallback fissi).
         """
-        # Se non viene passato un surrogato, usiamo il fit standard della classe base
         if self.surrogate_net is None:
-            print("[INFO] Nessun modello surrogato fornito per UAP. Esecuzione fit standard su DSFD.")
+            print("[WARNING] Surrogato non rilevato, esecuzione fit standard su DSFD.")
             return super().fit(dataloader, epsilon=epsilon, alpha=alpha, epochs=epochs, max_iter_per_img=max_iter_per_img)
 
-        print(f"[SUCCESSO] Modello surrogato attivo rilevato correttamente in TransferUAPAttack.")
+        print(f"[SUCCESSO] Modello surrogato attivo in TransferUAPAttack. Avvio calcolo UAP (epsilon={epsilon})...")
 
         if hasattr(self.surrogate_net, "eval") and callable(self.surrogate_net.eval):
             try:
