@@ -10,8 +10,8 @@ class TransferUAPAttack(UAPAttack):
     della perturbazione universale e verificando l'evasione sul target (DSFD).
     """
     def __init__(self, detector_wrapper, dsfd_net, mean_tensor, surrogate_net=None, device="cuda"):
+        self.surrogate_net = surrogate_net.to(torch.device(device)) if surrogate_net is not None else None
         super().__init__(detector_wrapper=detector_wrapper, dsfd_net=dsfd_net, mean_tensor=mean_tensor, device=device)
-        self.surrogate_net = surrogate_net.to(self.device) if surrogate_net is not None else None
 
     def fit(self, dataloader, epsilon=16.0, alpha=2, epochs=8, max_iter_per_img=15):
         """
