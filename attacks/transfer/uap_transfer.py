@@ -1,4 +1,5 @@
 import torch
+from torch.utils.data import DataLoader, Subset
 from tqdm import tqdm
 from attacks.uap import UAPAttack
 
@@ -15,13 +16,29 @@ class TransferUAPAttack(UAPAttack):
     def fit(self, dataloader, epsilon=16.0, alpha=2, epochs=8, max_iter_per_img=15):
         """
         Calcola la perturbazione universale (UAP) guidata dal modello surrogato.
-        Se il surrogato non è disponibile, esegue il fit standard basato su DSFD.
+        Gestisce autonomamente il troncamento del dataloader se troppo grande e fissa le epochs a 8.
         """
+        # Se il dataset sottostante è troppo grande, creiamo un subset rapido (es. max 30 campioni) per l'ottimizzazione UAP
+        if hasattr(dataloader, "dataset") and len(dataloader.dataset) > 30:
+            print("[INFO] Troncamento automatico del dataset UAP Transfer a 30 campioni per efficienza...")
+            subset_indices = list(range(min(30, len(dataloader.dataset))))
+            train_subset = Subset(dataloader.dataset, subset_indices)
+            dataloader = DataLoader(train_subset, batch_size=dataloader.batch_size if hasattr(dataloader, "batch_size") else 16, shuffle=True)
+
         if self.surrogate_net is None:
             print("[INFO] Nessun modello surrogato fornito per UAP. Esecuzione fit standard su DSFD.")
             return super().fit(dataloader, epsilon=epsilon, alpha=alpha, epochs=epochs, max_iter_per_img=max_iter_per_img)
 
-        self.surrogate_net.eval()
+        if hasattr(self.surrogate_net, "eval") and callable(self.surrogate_net.eval):
+            try:
+                self.surrogate_net.eval()
+            except Exception:
+                pass
+        elif hasattr(self.surrogate_net, "net") and hasattr(self.surrogate_net.net, "eval"):
+            try:
+                self.surrogate_net.net.eval()
+            except Exception:
+                pass
         
         sample_batch = next(iter(dataloader))
         sample_img = sample_batch[0] if isinstance(sample_batch, (list, tuple)) else sample_batch
