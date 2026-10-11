@@ -1,5 +1,4 @@
 import torch
-from torch.utils.data import DataLoader, Subset
 from tqdm import tqdm
 from attacks.uap import UAPAttack
 
@@ -15,16 +14,9 @@ class TransferUAPAttack(UAPAttack):
 
     def fit(self, dataloader, epsilon=16.0, alpha=2, epochs=8, max_iter_per_img=15):
         """
-        Calcola la perturbazione universale (UAP) guidata dal modello surrogato.
-        Gestisce autonomamente il troncamento del dataloader se troppo grande e fissa le epochs a 8.
+        Calcola la perturbazione universale (UAP) guidata dal modello surrogato,
+        eseguendo l'intero addestramento su tutte le 8 epochs standard.
         """
-        # Se il dataset sottostante è troppo grande, creiamo un subset rapido (es. max 30 campioni) per l'ottimizzazione UAP
-        if hasattr(dataloader, "dataset") and len(dataloader.dataset) > 30:
-            print("[INFO] Troncamento automatico del dataset UAP Transfer a 30 campioni per efficienza...")
-            subset_indices = list(range(min(30, len(dataloader.dataset))))
-            train_subset = Subset(dataloader.dataset, subset_indices)
-            dataloader = DataLoader(train_subset, batch_size=dataloader.batch_size if hasattr(dataloader, "batch_size") else 16, shuffle=True)
-
         if self.surrogate_net is None:
             print("[INFO] Nessun modello surrogato fornito per UAP. Esecuzione fit standard su DSFD.")
             return super().fit(dataloader, epsilon=epsilon, alpha=alpha, epochs=epochs, max_iter_per_img=max_iter_per_img)
@@ -127,6 +119,6 @@ class TransferUAPAttack(UAPAttack):
                             fooled_count += 1
 
             fooling_rate = (fooled_count / total_images) * 100 if total_images > 0 else 0.0
-            print(f"[UAP Transfer Epoch {epoch+1}/{epochs}] Fooling Rate sul target DSFD: {fooling_rate:.2f}%")
+            print(f"[UAP Transfer Epoch {epoch+1}/{epochs}] Fooling Rate sul dataset: {fooling_rate:.2f}%")
 
         print("[INFO] Calcolo UAP Transfer completato con successo!")
