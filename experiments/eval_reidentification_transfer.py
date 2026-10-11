@@ -160,9 +160,12 @@ class TransferEvaluator(BaseEvaluator):
         dataset = LFWDataset(root_dir="/kaggle/input/datasets/jessicali9530/lfw-dataset/lfw-deepfunneled/lfw-deepfunneled")
         # Se l'attacco è UAP, eseguiamo il fit preliminare sul dataset
         if args.attack.lower() == "uap":
-            from torch.utils.data import DataLoader
-            train_loader = DataLoader(dataset, batch_size=16, shuffle=True)
-            attack.fit(train_loader, epsilon=args.epsilon, epochs=3)
+            print("[INFO] Rilevato attacco UAP (Transfer): avvio della fase di fit (100 campioni, 8 epoche)...")
+            from torch.utils.data import DataLoader, Subset
+            subset_indices = range(min(100, len(dataset)))
+            uap_subset = Subset(dataset, subset_indices)
+            train_loader = DataLoader(uap_subset, batch_size=4, shuffle=True)
+            attack.fit(train_loader, epsilon=args.epsilon, alpha=2.0, epochs=8, max_iter_per_img=15)
             
         results = []
         print(f"[INFO] Elaborazione di {min(args.num_samples, len(dataset))} campioni con analisi di similarità (Transfer)...")
