@@ -34,8 +34,8 @@ class TransferUAPAttack(UAPAttack):
         if self.surrogate_net is None:
             print("[WARNING] Surrogato non rilevato, esecuzione fit standard su DSFD.")
             return super().fit(dataloader, epsilon=epsilon, alpha=alpha, epochs=epochs, max_iter_per_img=max_iter_per_img)
-
-        print(f"[SUCCESSO] Modello surrogato attivo in TransferUAPAttack. Avvio calcolo UAP (epsilon={epsilon})...")
+        else:
+            print(f"[SUCCESSO] Modello surrogato attivo in TransferUAPAttack. Avvio calcolo UAP (epsilon={epsilon})...")
 
         if hasattr(self.surrogate_net, "eval") and callable(self.surrogate_net.eval):
             try:
