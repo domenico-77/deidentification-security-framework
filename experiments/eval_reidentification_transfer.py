@@ -13,6 +13,7 @@ from attacks.transfer.fgsm_transfer import TransferFGSMAttack
 from attacks.transfer.bim_transfer import TransferBIMAttack
 from attacks.transfer.pgd_transfer import TransferPGDAttack
 from attacks.transfer.deepfool_transfer import TransferDeepFoolAttack
+from attacks.transfer.uap_transfer import TransferUAPAttack
 
 from data_loaders.lfw import LFWDataset
 
@@ -66,7 +67,18 @@ class TransferEvaluator(BaseEvaluator):
                 device=self.device
             )
         elif attack_name == "uap":
-            raise NotImplementedError("UAP Transfer non ancora implementato.")
+            uap_attack = TransferUAPAttack(
+                detector_wrapper=detector_wrapper,
+                dsfd_net=dsfd_net,
+                mean_tensor=mean_tensor,
+                surrogate_net=surrogate_net,
+                device=self.device
+            )
+            # Se necessario, esegue il fit sul dataset prima della valutazione
+            from torch.utils.data import DataLoader
+            train_loader = DataLoader(dataset, batch_size=16, shuffle=True)
+            uap_attack.fit(train_loader, epsilon=args.epsilon, epochs=3)
+            return uap_attack
         else:
             raise ValueError(f"Attacco transfer non supportato o non valido: {attack_name}")
 
