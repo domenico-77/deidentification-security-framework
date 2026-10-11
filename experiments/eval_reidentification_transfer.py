@@ -3,6 +3,8 @@ from pathlib import Path
 # Aggiungiamo la root del progetto al path per importare eval_reidentification e i moduli degli attacchi
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import os
+import subprocess
+import shutil
 import argparse
 import torch
 import pandas as pd
@@ -87,26 +89,33 @@ class TransferEvaluator(BaseEvaluator):
                 
         elif args.surrogate == "retinaface":
             try:
-                # Assicurati che il modulo retinaface sia disponibile nel path o nel progetto
-                from detectors.retinaface import RetinaFaceDetector
-            except ImportError as ie:
-                print(f"[ERROR] Impossibile trovare il modulo RetinaFace in detectors.retinaface.retinaface: {ie}")
-                raise ie
+                # Assicuriamo che la cartella models/retinaface esista prima di importare il detector
+                root_dir = Path(__file__).resolve().parent.parent
+                models_dir = root_dir / "models"
+                retina_dir = models_dir / "retinaface"
                 
-            cfg = {
-                'name': 'mobilenet0.25',
-                'min_sizes': [[16, 32], [64, 128], [256, 512]],
-                'steps': [8, 16, 32],
-                'variance': [0.1, 0.2],
-                'clip': False,
-                'loc_weight': 2.0,
-                'cls_weight': 1.0,
-                'landm_weight': 1.0,
-                'pretrain': False
-            }
-            
-            weights_path = args.surrogate_weights if args.surrogate_weights else "/kaggle/input/datasets/domenicovicenti/retinaface-weights/mobilenet0.25_Final.pth"
-            try:
+                if not (retina_dir / "retinaface.py").exists():
+                    print("[INFO] Clonazione automatica dell'architettura RetinaFace in models/retinaface...")
+                    models_dir.mkdir(parents=True, exist_ok=True)
+                    temp_dir = models_dir / "temp_retina"
+                    if temp_dir.exists():
+                        shutil.rmtree(temp_dir)
+                    subprocess.check_call([
+                        "git", "clone", "https://github.com/biubug6/Pytorch_Retinaface.git", str(temp_dir)
+                    ])
+                    retina_dir.mkdir(parents=True, exist_ok=True)
+                    for item in temp_dir.iterdir():
+                        dest_path = retina_dir / item.name
+                        if dest_path.exists():
+                            if dest_path.is_dir():
+                                shutil.rmtree(dest_path)
+                            else:
+                                dest_path.unlink()
+                        shutil.move(str(item), str(dest_path))
+                    shutil.rmtree(temp_dir)
+
+                from detectors.retinaface import RetinaFaceDetector
+                weights_path = args.surrogate_weights if args.surrogate_weights else "/kaggle/input/datasets/domenicovicenti/retinaface-weights/mobilenet0.25_Final.pth"
                 surrogate_net = RetinaFaceDetector(weights_path=weights_path, device=self.device)
                 print(f"[SUCCESSO] RetinaFace caricato correttamente da: {weights_path}")
             except Exception as e:
