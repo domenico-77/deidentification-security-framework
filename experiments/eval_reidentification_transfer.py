@@ -67,18 +67,13 @@ class TransferEvaluator(BaseEvaluator):
                 device=self.device
             )
         elif attack_name == "uap":
-            uap_attack = TransferUAPAttack(
+            return TransferUAPAttack(
                 detector_wrapper=detector_wrapper,
                 dsfd_net=dsfd_net,
                 mean_tensor=mean_tensor,
                 surrogate_net=surrogate_net,
                 device=self.device
             )
-            # Se necessario, esegue il fit sul dataset prima della valutazione
-            from torch.utils.data import DataLoader
-            train_loader = DataLoader(dataset, batch_size=16, shuffle=True)
-            uap_attack.fit(train_loader, epsilon=args.epsilon, epochs=3)
-            return uap_attack
         else:
             raise ValueError(f"Attacco transfer non supportato o non valido: {attack_name}")
 
@@ -163,7 +158,12 @@ class TransferEvaluator(BaseEvaluator):
 
         # 4. Caricamento dataset LFW
         dataset = LFWDataset(root_dir="/kaggle/input/datasets/jessicali9530/lfw-dataset/lfw-deepfunneled/lfw-deepfunneled")
-
+        # Se l'attacco è UAP, eseguiamo il fit preliminare sul dataset
+        if args.attack.lower() == "uap":
+            from torch.utils.data import DataLoader
+            train_loader = DataLoader(dataset, batch_size=16, shuffle=True)
+            attack.fit(train_loader, epsilon=args.epsilon, epochs=3)
+            
         results = []
         print(f"[INFO] Elaborazione di {min(args.num_samples, len(dataset))} campioni con analisi di similarità (Transfer)...")
 
