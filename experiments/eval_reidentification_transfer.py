@@ -87,26 +87,9 @@ class TransferEvaluator(BaseEvaluator):
                 
         elif args.surrogate == "retinaface":
             try:
-                from models.retinaface.retinaface import RetinaFace
-                cfg = {
-                    'name': 'mobilenet0.25',
-                    'min_sizes': [[16, 32], [64, 128], [256, 512]],
-                    'steps': [8, 16, 32],
-                    'variance': [0.1, 0.2],
-                    'clip': False,
-                    'loc_weight': 2.0,
-                    'cls_weight': 1.0,
-                    'landm_weight': 1.0,
-                    'pretrain': False
-                }
-                surrogate_net = RetinaFace(cfg=cfg, phase='test')
+                from detectors.retinaface import RetinaFaceDetector
                 weights_path = args.surrogate_weights if args.surrogate_weights else "/kaggle/input/datasets/domenicovicenti/retinaface-weights/mobilenet0.25_Final.pth"
-                checkpoint = torch.load(weights_path, map_location=self.device)
-                if 'state_dict' in checkpoint:
-                    checkpoint = checkpoint['state_dict']
-                new_state_dict = {k.replace('module.', ''): v for k, v in checkpoint.items()}
-                surrogate_net.load_state_dict(new_state_dict, strict=False)
-                surrogate_net = surrogate_net.to(self.device).eval()
+                surrogate_net = RetinaFaceDetector(weights_path=weights_path, device=self.device)
                 print(f"[SUCCESSO] RetinaFace caricato correttamente da: {weights_path}")
             except Exception as e:
                 print(f"[ERROR] Errore nel caricamento dei pesi di RetinaFace: {e}")
@@ -148,20 +131,14 @@ class TransferEvaluator(BaseEvaluator):
             else:
                 raise AttributeError("L'oggetto attacco non possiede un metodo .perturb() valido.")
 
-            # --- VERIFICA 1: Evasione del Modello Surrogato (RetinaFace / YOLO) ---
+            # --- VERIFICA 1: Evasione del Modello Surrogato ---
             surrogate_evaded = False
             if surrogate_net is not None:
                 with torch.no_grad():
-                    surr_input = (img_adv / 255.0).unsqueeze(0) if img_adv.ndim == 3 else (img_adv / 255.0)
-                    out_surr = surrogate_net(surr_input)
-                    if isinstance(out_surr, tuple) and len(out_surr) >= 2:
-                        conf = out_surr[1]
-                        if conf.dim() == 3:
-                            valid_faces = (conf[:, :, 1] > 0.5).sum().item()
-                            surrogate_evaded = (valid_faces == 0)
-                    elif hasattr(out_surr, "boxes"):
-                        boxes = out_surr.boxes
-                        surrogate_evaded = (boxes is None or boxes.conf is None or len(boxes.conf) == 0)
+                    surr_input = img_adv.unsqueeze(0) if img_adv.ndim == 3 else img_adv
+                    if hasattr(surrogate_net, "count_detections"):
+                        surr_detections = surrogate_net.count_detections(surr_input)
+                        surrogate_evaded = (surr_detections == 0)
 
             # B. Passaggio attraverso la pipeline di anonimizzazione
             with torch.no_grad():
@@ -216,7 +193,6 @@ class TransferEvaluator(BaseEvaluator):
                     sim_orig_adv = self.compute_cosine_similarity(emb_orig, emb_adv_pipe)
 
             # --- VERIFICA 3: Fallimento della de-identificazione (Leakage dell'identità) ---
-            # Soglia standard di riconoscimento facciale (es. sim > 0.4 indica che l'identità è preservata)
             deidentification_failed = (sim_orig_adv > 0.4)
 
             # D. Registrazione metriche estese
