@@ -3,6 +3,7 @@ from pathlib import Path
 # Aggiungiamo la root del progetto al path per importare eval_reidentification e i moduli degli attacchi
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import os
+import subprocess
 import argparse
 import torch
 import pandas as pd
@@ -87,6 +88,16 @@ class TransferEvaluator(BaseEvaluator):
                 
         elif args.surrogate == "retinaface":
             try:
+                # Assicurazione preventiva della cartella models/retinaface se assente
+                root_dir = Path(__file__).resolve().parent.parent
+                retina_dir = root_dir / "models" / "retinaface"
+                if not (retina_dir / "retinaface.py").exists():
+                    print("[INFO] Clonazione automatica dell'architettura RetinaFace mancante...")
+                    retina_dir.mkdir(parents=True, exist_ok=True)
+                    subprocess.check_call([
+                        "git", "clone", "https://github.com/biubug6/Pytorch_Retinaface.git", str(retina_dir)
+                    ])
+
                 from detectors.retinaface import RetinaFaceDetector
                 weights_path = args.surrogate_weights if args.surrogate_weights else "/kaggle/input/datasets/domenicovicenti/retinaface-weights/mobilenet0.25_Final.pth"
                 surrogate_net = RetinaFaceDetector(weights_path=weights_path, device=self.device)
