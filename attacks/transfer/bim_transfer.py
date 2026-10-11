@@ -32,32 +32,29 @@ class TransferBIMAttack(BIMAttack):
         success = False
         success_iteration = None
 
-        # Se non è presente un modello surrogato, esegue il BIM standard sul target
         if self.surrogate_net is None:
-            return super().perturb(img_orig_tensor, epsilon=epsilon, alpha=alpha, num_iter=num_iter)
+            return super().perturb(img_orig_tensor.squeeze(0), epsilon=epsilon, alpha=alpha, num_iter=num_iter)
 
-        # Ciclo iterativo BIM basato sul modello surrogato
         for i in range(num_iter):
             img_adv.requires_grad_(True)
             
-            # 1. Adatta l'input in base al modello surrogato (es. normalizzazione [0, 1])
+            # Surrogato richiede 4D [B, C, H, W]
             input_surrogate = img_adv / 255.0 if img_adv.max() > 1.0 else img_adv
+            if input_surrogate.ndim == 3:
+                input_surrogate = input_surrogate.unsqueeze(0)
 
-            # 2. Calcolo Loss di evasione tramite il metodo standardizzato del surrogato
             if hasattr(self.surrogate_net, "compute_adversarial_loss"):
                 loss = self.surrogate_net.compute_adversarial_loss(input_surrogate)
             else:
                 surrogate_out = self.surrogate_net(input_surrogate)
                 loss = torch.relu(surrogate_out[1]).sum() if isinstance(surrogate_out, (list, tuple)) else torch.tensor(0.0, device=self.device, requires_grad=True)
 
-            # 3. Backward pass sul surrogato
             self.surrogate_net.zero_grad()
             if img_adv.grad is not None:
                 img_adv.grad.zero_()
                 
             loss.backward()
 
-            # 4. Aggiornamento iterativo BIM e proiezione L-infinity
             if img_adv.grad is not None and torch.abs(img_adv.grad).sum().item() > 0:
                 grad_sign = img_adv.grad.sign()
                 with torch.no_grad():
@@ -66,10 +63,10 @@ class TransferBIMAttack(BIMAttack):
                     eta = torch.clamp(eta, min=-epsilon, max=epsilon)
                     img_adv = torch.clamp(img_orig_tensor + eta, min=0.0, max=255.0).detach()
 
-            # 5. Verifica dell'effettiva evasione del detector target reale (DSFD) assicurando input 4D
+            # Detector target (DSFD) richiede 3D [C, H, W]
             detector_input = img_adv.detach().byte().float()
-            if detector_input.ndim == 3:
-                detector_input = detector_input.unsqueeze(0)
+            if detector_input.ndim == 4:
+                detector_input = detector_input[0]
                 
             with torch.no_grad():
                 detections = self.detector(detector_input)
@@ -83,7 +80,7 @@ class TransferBIMAttack(BIMAttack):
         if not success:
             success_iteration = num_iter
 
-        return img_adv, success, success_iteration
+        return img_adv[0] if img_adv.ndim == 4 else img_adv, success, success_iteration
 
     def attack(self, image_tensor: torch.Tensor, epsilon=8.0, **kwargs) -> torch.Tensor:
         img_adv, _, _ = self.perturb(image_tensor, epsilon=epsilon, **kwargs)
