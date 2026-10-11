@@ -66,8 +66,11 @@ class TransferBIMAttack(BIMAttack):
                     eta = torch.clamp(eta, min=-epsilon, max=epsilon)
                     img_adv = torch.clamp(img_orig_tensor + eta, min=0.0, max=255.0).detach()
 
-            # 5. Verifica dell'effettiva evasione del detector target reale (DSFD)
+            # 5. Verifica dell'effettiva evasione del detector target reale (DSFD) assicurando input 4D
             detector_input = img_adv.detach().byte().float()
+            if detector_input.ndim == 3:
+                detector_input = detector_input.unsqueeze(0)
+                
             with torch.no_grad():
                 detections = self.detector(detector_input)
             
