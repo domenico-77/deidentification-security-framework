@@ -23,6 +23,9 @@ class TransferBIMAttack(BIMAttack):
         Esegue l'attacco BIM Transfer basato sul surrogato,
         verificando l'evasione sul detector target (DSFD).
         """
+        if img_orig_tensor.ndim == 3:
+            img_orig_tensor = img_orig_tensor.unsqueeze(0)
+
         img_adv = img_orig_tensor.clone().detach().to(self.device)
         img_orig_tensor = img_orig_tensor.to(self.device)
         
