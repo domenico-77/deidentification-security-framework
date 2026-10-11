@@ -3,7 +3,6 @@ from pathlib import Path
 # Aggiungiamo la root del progetto al path per importare eval_reidentification e i moduli degli attacchi
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import os
-import subprocess
 import argparse
 import torch
 import pandas as pd
@@ -88,18 +87,27 @@ class TransferEvaluator(BaseEvaluator):
                 
         elif args.surrogate == "retinaface":
             try:
-                # Assicurazione preventiva della cartella models/retinaface se assente
-                root_dir = Path(__file__).resolve().parent.parent
-                retina_dir = root_dir / "models" / "retinaface"
-                if not (retina_dir / "retinaface.py").exists():
-                    print("[INFO] Clonazione automatica dell'architettura RetinaFace mancante...")
-                    retina_dir.mkdir(parents=True, exist_ok=True)
-                    subprocess.check_call([
-                        "git", "clone", "https://github.com/biubug6/Pytorch_Retinaface.git", str(retina_dir)
-                    ])
-
+                # Assicurati che il modulo retinaface sia disponibile nel path o nel progetto
                 from detectors.retinaface import RetinaFaceDetector
-                weights_path = args.surrogate_weights if args.surrogate_weights else "/kaggle/input/datasets/domenicovicenti/retinaface-weights/mobilenet0.25_Final.pth"
+            except ImportError as ie:
+                print(f"[ERROR] Impossibile trovare il modulo RetinaFace in detectors.retinaface.retinaface: {ie}")
+                raise ie
+                
+            # Inizializzazione RetinaFace con configurazione MobileNet0.25 (come i tuoi pesi)
+            cfg = {
+                'name': 'mobilenet0.25',
+                'min_sizes': [[16, 32], [64, 128], [256, 512]],
+                'steps': [8, 16, 32],
+                'variance': [0.1, 0.2],
+                'clip': False,
+                'loc_weight': 2.0,
+                'cls_weight': 1.0,
+                'landm_weight': 1.0,
+                'pretrain': False
+            }
+            
+            weights_path = args.surrogate_weights if args.surrogate_weights else "/kaggle/input/datasets/domenicovicenti/retinaface-weights/mobilenet0.25_Final.pth"
+            try:
                 surrogate_net = RetinaFaceDetector(weights_path=weights_path, device=self.device)
                 print(f"[SUCCESSO] RetinaFace caricato correttamente da: {weights_path}")
             except Exception as e:
@@ -203,7 +211,7 @@ class TransferEvaluator(BaseEvaluator):
                 if emb_orig is not None and emb_adv_pipe is not None:
                     sim_orig_adv = self.compute_cosine_similarity(emb_orig, emb_adv_pipe)
 
-            # --- VERIFICA 3: Fallimento della de-identificazione (Leakage dell'identità) ---
+            # --- VERIFICA 3: Fallimento della de-identificazione ---
             deidentification_failed = (sim_orig_adv > 0.4)
 
             # D. Registrazione metriche estese
@@ -212,9 +220,9 @@ class TransferEvaluator(BaseEvaluator):
                 "attack": f"transfer_{args.attack}",
                 "surrogate": args.surrogate,
                 "epsilon": args.epsilon,
-                "surrogate_evaded": surrogate_evaded,                  # 1. Evasione del surrogato
-                "detector_evaded": success,                            # 2. Evasione di DSFD
-                "deidentification_failed": deidentification_failed,      # 3. Fallimento de-identificazione
+                "surrogate_evaded": surrogate_evaded,
+                "detector_evaded": success,
+                "deidentification_failed": deidentification_failed,
                 "pipeline_behavior": "Bypassed (Original face retained)" if success else "Anonymized (Face replaced)",
                 "sim_orig_vs_anonymized": round(sim_orig_anon, 4),
                 "sim_orig_vs_adversarial_pipe": round(sim_orig_adv, 4)
@@ -229,7 +237,7 @@ class TransferEvaluator(BaseEvaluator):
         df.to_csv(output_csv, index=False)
         print(f"\n[SUCCESSO] Analisi di similarità transfer completata. Report salvato in: {output_csv}")
 
-        # STAMPA TABELLA RIASSUNTIVA E METRICHE CHIAVE A TERMINALE
+        # STAMPA TABELLA RIASSUNTIVA E STATISTICHE A TERMINALE
         print("\n" + "="*80)
         print(" TABELLA RIASSUNTIVA TRANSFER (Campioni elaborati)")
         print("="*80)
