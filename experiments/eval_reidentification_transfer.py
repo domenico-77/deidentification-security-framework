@@ -87,7 +87,7 @@ class TransferEvaluator(BaseEvaluator):
                 
         elif args.surrogate == "retinaface":
             try:
-                from detectors.retinaface import RetinaFaceDetector
+                from models.retinaface.retinaface import RetinaFace
                 cfg = {
                     'name': 'mobilenet0.25',
                     'min_sizes': [[16, 32], [64, 128], [256, 512]],
@@ -99,34 +99,18 @@ class TransferEvaluator(BaseEvaluator):
                     'landm_weight': 1.0,
                     'pretrain': False
                 }
-                surrogate_net = RetinaFaceDetector(weights_path=args.surrogate_weights, device=self.device)
-                print(f"[SUCCESSO] RetinaFace caricato correttamente da: {args.surrogate_weights}")
+                surrogate_net = RetinaFace(cfg=cfg, phase='test')
+                weights_path = args.surrogate_weights if args.surrogate_weights else "/kaggle/input/datasets/domenicovicenti/retinaface-weights/mobilenet0.25_Final.pth"
+                checkpoint = torch.load(weights_path, map_location=self.device)
+                if 'state_dict' in checkpoint:
+                    checkpoint = checkpoint['state_dict']
+                new_state_dict = {k.replace('module.', ''): v for k, v in checkpoint.items()}
+                surrogate_net.load_state_dict(new_state_dict, strict=False)
+                surrogate_net = surrogate_net.to(self.device).eval()
+                print(f"[SUCCESSO] RetinaFace caricato correttamente da: {weights_path}")
             except Exception as e:
-                try:
-                    from models.retinaface.retinaface import RetinaFace
-                    cfg = {
-                        'name': 'mobilenet0.25',
-                        'min_sizes': [[16, 32], [64, 128], [256, 512]],
-                        'steps': [8, 16, 32],
-                        'variance': [0.1, 0.2],
-                        'clip': False,
-                        'loc_weight': 2.0,
-                        'cls_weight': 1.0,
-                        'landm_weight': 1.0,
-                        'pretrain': False
-                    }
-                    surrogate_net_raw = RetinaFace(cfg=cfg, phase='test')
-                    weights_path = args.surrogate_weights if args.surrogate_weights else "/kaggle/input/datasets/domenicovicenti/retinaface-weights/mobilenet0.25_Final.pth"
-                    checkpoint = torch.load(weights_path, map_location=self.device)
-                    if 'state_dict' in checkpoint:
-                        checkpoint = checkpoint['state_dict']
-                    new_state_dict = {k.replace('module.', ''): v for k, v in checkpoint.items()}
-                    surrogate_net_raw.load_state_dict(new_state_dict, strict=False)
-                    surrogate_net = surrogate_net_raw.to(self.device).eval()
-                    print(f"[SUCCESSO] RetinaFace (Raw fallback) caricato correttamente da: {weights_path}")
-                except Exception as ex:
-                    print(f"[ERROR] Impossibile caricare i pesi di RetinaFace: {ex}")
-                    raise ex
+                print(f"[ERROR] Errore nel caricamento dei pesi di RetinaFace: {e}")
+                raise e
 
         # 3. Istanziazione dell'attacco di trasferimento tramite factory personalizzata
         attack = self.get_attack_instance(
@@ -164,18 +148,20 @@ class TransferEvaluator(BaseEvaluator):
             else:
                 raise AttributeError("L'oggetto attacco non possiede un metodo .perturb() valido.")
 
-            # --- VERIFICA 1: Evasione del Modello Surrogato ---
+            # --- VERIFICA 1: Evasione del Modello Surrogato (RetinaFace / YOLO) ---
             surrogate_evaded = False
             if surrogate_net is not None:
                 with torch.no_grad():
-                    surrogate_input = img_adv.unsqueeze(0) if img_adv.ndim == 3 else img_adv
-                    if hasattr(surrogate_net, "count_detections"):
-                        surr_detections = surrogate_net.count_detections(surrogate_input)
-                        surrogate_evaded = (surr_detections == 0)
-                    else:
-                        out_surr = surrogate_net(surrogate_input / 255.0 if surrogate_input.max() > 1.0 else surrogate_input)
-                        if isinstance(out_surr, (list, tuple)):
-                            surrogate_evaded = all(len(t) == 0 for t in out_surr if isinstance(t, torch.Tensor))
+                    surr_input = (img_adv / 255.0).unsqueeze(0) if img_adv.ndim == 3 else (img_adv / 255.0)
+                    out_surr = surrogate_net(surr_input)
+                    if isinstance(out_surr, tuple) and len(out_surr) >= 2:
+                        conf = out_surr[1]
+                        if conf.dim() == 3:
+                            valid_faces = (conf[:, :, 1] > 0.5).sum().item()
+                            surrogate_evaded = (valid_faces == 0)
+                    elif hasattr(out_surr, "boxes"):
+                        boxes = out_surr.boxes
+                        surrogate_evaded = (boxes is None or boxes.conf is None or len(boxes.conf) == 0)
 
             # B. Passaggio attraverso la pipeline di anonimizzazione
             with torch.no_grad():
@@ -229,15 +215,19 @@ class TransferEvaluator(BaseEvaluator):
                 if emb_orig is not None and emb_adv_pipe is not None:
                     sim_orig_adv = self.compute_cosine_similarity(emb_orig, emb_adv_pipe)
 
+            # --- VERIFICA 3: Fallimento della de-identificazione (Leakage dell'identità) ---
+            # Soglia standard di riconoscimento facciale (es. sim > 0.4 indica che l'identità è preservata)
+            deidentification_failed = (sim_orig_adv > 0.4)
+
             # D. Registrazione metriche estese
             results.append({
                 "sample_id": idx,
                 "attack": f"transfer_{args.attack}",
                 "surrogate": args.surrogate,
                 "epsilon": args.epsilon,
-                "surrogate_evaded": surrogate_evaded,
-                "detector_evaded": success,
-                "identity_leakage_failed": sim_orig_adv > 0.4,
+                "surrogate_evaded": surrogate_evaded,                  # 1. Evasione del surrogato
+                "detector_evaded": success,                            # 2. Evasione di DSFD
+                "deidentification_failed": deidentification_failed,      # 3. Fallimento de-identificazione
                 "pipeline_behavior": "Bypassed (Original face retained)" if success else "Anonymized (Face replaced)",
                 "sim_orig_vs_anonymized": round(sim_orig_anon, 4),
                 "sim_orig_vs_adversarial_pipe": round(sim_orig_adv, 4)
@@ -252,22 +242,22 @@ class TransferEvaluator(BaseEvaluator):
         df.to_csv(output_csv, index=False)
         print(f"\n[SUCCESSO] Analisi di similarità transfer completata. Report salvato in: {output_csv}")
 
-        # STAMPA TABELLA RIASSUNTIVA E STATISTICHE A TERMINALE
+        # STAMPA TABELLA RIASSUNTIVA E METRICHE CHIAVE A TERMINALE
         print("\n" + "="*80)
         print(" TABELLA RIASSUNTIVA TRANSFER (Campioni elaborati)")
         print("="*80)
         print(df.to_string(index=False))
         
         print("\n" + "="*80)
-        print(" METRICHE DI VALUTAZIONE TRASFERIMENTO (Evasione & Leakage)")
+        print(" METRICHE DI VALUTAZIONE CHIAVE (Transfer Attack)")
         print("="*80)
-        surr_success_rate = (df["surrogate_evaded"].sum() / len(df)) * 100
-        dsfd_success_rate = (df["detector_evaded"].sum() / len(df)) * 100
-        leak_rate = (df["sim_orig_vs_adversarial_pipe"] > 0.4).mean() * 100
+        surr_evasion_rate = (df["surrogate_evaded"].sum() / len(df)) * 100
+        dsfd_evasion_rate = (df["detector_evaded"].sum() / len(df)) * 100
+        leak_rate = (df["deidentification_failed"].sum() / len(df)) * 100
         
-        print(f" -> Tasso di Evasione Surrogato ({args.surrogate.upper()}): {surr_success_rate:.2f}%")
-        print(f" -> Tasso di Evasione Target (DSFD):             {dsfd_success_rate:.2f}%")
-        print(f" -> Tasso di Fallimento De-identificazione (Leak): {leak_rate:.2f}% (ArcFace sim > 0.4)")
+        print(f" 1. Tasso di Evasione del Surrogato ({args.surrogate.upper()}): {surr_evasion_rate:.2f}%")
+        print(f" 2. Tasso di Evasione del Detector Target (DSFD):  {dsfd_evasion_rate:.2f}%")
+        print(f" 3. Tasso di Fallimento della De-identificazione:   {leak_rate:.2f}% (ArcFace sim > 0.4)")
         print("="*80)
 
         print("\n" + "="*80)
