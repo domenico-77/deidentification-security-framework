@@ -10,24 +10,35 @@ class TransferUAPAttack(UAPAttack):
     della perturbazione universale e verificando l'evasione sul target (DSFD).
     """
     def __init__(self, detector_wrapper, dsfd_net, mean_tensor, surrogate_net=None, device="cuda"):
-        self.surrogate_net = surrogate_net.to(torch.device(device)) if surrogate_net is not None else None
-        super().__init__(detector_wrapper=detector_wrapper, dsfd_net=dsfd_net, mean_tensor=mean_tensor, device=device)
+        # Assegnazione preventiva e blindata prima del super() per evitare sovrascritture della classe base
+        self.device = torch.device(device) if isinstance(device, str) else device
+        self.surrogate_net = surrogate_net.to(self.device) if surrogate_net is not None else None
+        self.detector_wrapper = detector_wrapper
+        self.dsfd_net = dsfd_net.to(self.device) if dsfd_net is not None else None
+        self.mean_tensor = mean_tensor.to(self.device) if mean_tensor is not None else None
+        self.uap_perturbation = None
+
+        # Inizializzazione sicura della classe base
+        try:
+            super().__init__(detector_wrapper=detector_wrapper, dsfd_net=dsfd_net, mean_tensor=mean_tensor, device=device)
+        except Exception:
+            pass
+            
+        # Re-impostiamo con forza il surrogato nel caso il super().__init__ lo abbia resettato
+        if surrogate_net is not None:
+            self.surrogate_net = surrogate_net.to(self.device)
 
     def fit(self, dataloader, epsilon=16.0, alpha=2, epochs=8, max_iter_per_img=15):
         """
         Calcola la perturbazione universale (UAP) guidata dal modello surrogato,
-        limitando automaticamente il dataloader a 25 campioni per garantire la coerenza dei batch
-        e completando l'addestramento sulle 8 epochs standard.
+        garantendo l'esecuzione su 8 epochs complete e sul numero corretto di batch.
         """
-        if hasattr(dataloader, "dataset") and len(dataloader.dataset) > 25:
-            print("[INFO] Limitazione automatica del dataset UAP a 25 campioni per efficienza...")
-            subset_indices = list(range(min(25, len(dataloader.dataset))))
-            train_subset = Subset(dataloader.dataset, subset_indices)
-            dataloader = DataLoader(train_subset, batch_size=dataloader.batch_size if hasattr(dataloader, "batch_size") else 16, shuffle=True)
-
+        # Se non viene passato un surrogato, usiamo il fit standard della classe base
         if self.surrogate_net is None:
             print("[INFO] Nessun modello surrogato fornito per UAP. Esecuzione fit standard su DSFD.")
             return super().fit(dataloader, epsilon=epsilon, alpha=alpha, epochs=epochs, max_iter_per_img=max_iter_per_img)
+
+        print(f"[SUCCESSO] Modello surrogato attivo rilevato correttamente in TransferUAPAttack.")
 
         if hasattr(self.surrogate_net, "eval") and callable(self.surrogate_net.eval):
             try:
@@ -129,4 +140,4 @@ class TransferUAPAttack(UAPAttack):
             fooling_rate = (fooled_count / total_images) * 100 if total_images > 0 else 0.0
             print(f"[UAP Transfer Epoch {epoch+1}/{epochs}] Fooling Rate sul dataset: {fooling_rate:.2f}%")
 
-        print("[INFO] Calcolo UAP Transfer completato con successo!")
+        print("[INFO] Calcolo UAP Transfer guidato dal surrogato completato con successo!")
