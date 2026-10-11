@@ -7,8 +7,7 @@ import argparse
 import torch
 import pandas as pd
 from tqdm import tqdm
-import numpy as np
-
+#ciao
 from eval_reidentification import BaseEvaluator
 from attacks.transfer.pgd_transfer import TransferPGDAttack
 from attacks.transfer.fgsm_transfer import TransferFGSMAttack
@@ -92,23 +91,30 @@ class TransferEvaluator(BaseEvaluator):
             except ImportError as ie:
                 print(f"[ERROR] Impossibile trovare il modulo RetinaFace in detectors.retinaface.retinaface: {ie}")
                 raise ie
+                # Inizializzazione RetinaFace con configurazione MobileNet0.25 (come i tuoi pesi)
+                cfg = {
+                    'name': 'mobilenet0.25',
+                    'min_sizes': [[16, 32], [64, 128], [256, 512]],
+                    'steps': [8, 16, 32],
+                    'variance': [0.1, 0.2],
+                    'clip': False,
+                    'loc_weight': 2.0,
+                    'cls_weight': 1.0,
+                    'landm_weight': 1.0,
+                    'pretrain': False
+                }
+                surrogate_net = RetinaFace(cfg=cfg, phase='test')
                 
-            # Inizializzazione RetinaFace con configurazione MobileNet0.25 (come i tuoi pesi)
-            cfg = {
-                'name': 'mobilenet0.25',
-                'min_sizes': [[16, 32], [64, 128], [256, 512]],
-                'steps': [8, 16, 32],
-                'variance': [0.1, 0.2],
-                'clip': False,
-                'loc_weight': 2.0,
-                'cls_weight': 1.0,
-                'landm_weight': 1.0,
-                'pretrain': False
-            }
-            
-            weights_path = args.surrogate_weights if args.surrogate_weights else "/kaggle/input/datasets/domenicovicenti/retinaface-weights/mobilenet0.25_Final.pth"
-            try:
-                surrogate_net = RetinaFaceDetector(weights_path=weights_path, device=self.device)
+                weights_path = args.surrogate_weights if args.surrogate_weights else "/kaggle/input/datasets/domenicovicenti/retinaface-weights/mobilenet0.25_Final.pth"
+                checkpoint = torch.load(weights_path, map_location=self.device)
+                
+                if 'state_dict' in checkpoint:
+                    checkpoint = checkpoint['state_dict']
+                # Rimuove eventuali prefissi 'module.' salvati da DataParallel
+                new_state_dict = {k.replace('module.', ''): v for k, v in checkpoint.items()}
+                surrogate_net.load_state_dict(new_state_dict, strict=False)
+                
+                surrogate_net = surrogate_net.to(self.device).eval()
                 print(f"[SUCCESSO] RetinaFace caricato correttamente da: {weights_path}")
             except Exception as e:
                 print(f"[ERROR] Errore nel caricamento dei pesi di RetinaFace: {e}")
@@ -149,15 +155,6 @@ class TransferEvaluator(BaseEvaluator):
                     img_adv, success, _ = attack.perturb(img_tensor[0])
             else:
                 raise AttributeError("L'oggetto attacco non possiede un metodo .perturb() valido.")
-
-            # --- VERIFICA 1: Evasione del Modello Surrogato ---
-            surrogate_evaded = False
-            if surrogate_net is not None:
-                with torch.no_grad():
-                    surr_input = img_adv.unsqueeze(0) if img_adv.ndim == 3 else img_adv
-                    if hasattr(surrogate_net, "count_detections"):
-                        surr_detections = surrogate_net.count_detections(surr_input)
-                        surrogate_evaded = (surr_detections == 0)
 
             # B. Passaggio attraverso la pipeline di anonimizzazione
             with torch.no_grad():
@@ -211,18 +208,13 @@ class TransferEvaluator(BaseEvaluator):
                 if emb_orig is not None and emb_adv_pipe is not None:
                     sim_orig_adv = self.compute_cosine_similarity(emb_orig, emb_adv_pipe)
 
-            # --- VERIFICA 3: Fallimento della de-identificazione ---
-            deidentification_failed = (sim_orig_adv > 0.4)
-
             # D. Registrazione metriche estese
             results.append({
                 "sample_id": idx,
                 "attack": f"transfer_{args.attack}",
                 "surrogate": args.surrogate,
                 "epsilon": args.epsilon,
-                "surrogate_evaded": surrogate_evaded,
                 "detector_evaded": success,
-                "deidentification_failed": deidentification_failed,
                 "pipeline_behavior": "Bypassed (Original face retained)" if success else "Anonymized (Face replaced)",
                 "sim_orig_vs_anonymized": round(sim_orig_anon, 4),
                 "sim_orig_vs_adversarial_pipe": round(sim_orig_adv, 4)
@@ -243,18 +235,6 @@ class TransferEvaluator(BaseEvaluator):
         print("="*80)
         print(df.to_string(index=False))
         
-        print("\n" + "="*80)
-        print(" METRICHE DI VALUTAZIONE CHIAVE (Transfer Attack)")
-        print("="*80)
-        surr_evasion_rate = (df["surrogate_evaded"].sum() / len(df)) * 100
-        dsfd_evasion_rate = (df["detector_evaded"].sum() / len(df)) * 100
-        leak_rate = (df["deidentification_failed"].sum() / len(df)) * 100
-        
-        print(f" 1. Tasso di Evasione del Surrogato ({args.surrogate.upper()}): {surr_evasion_rate:.2f}%")
-        print(f" 2. Tasso di Evasione del Detector Target (DSFD):  {dsfd_evasion_rate:.2f}%")
-        print(f" 3. Tasso di Fallimento della De-identificazione:   {leak_rate:.2f}% (ArcFace sim > 0.4)")
-        print("="*80)
-
         print("\n" + "="*80)
         print(" STATISTICHE DESCRITTIVE DELLE SIMILARITÀ TRANSFER (ArcFace)")
         print("="*80)
