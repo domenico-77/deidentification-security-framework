@@ -47,9 +47,18 @@ class TransferEvaluator(BaseEvaluator):
                 device=self.device
             )
         elif attack_name == "bim":
-            raise NotImplementedError("BIM Transfer non ancora implementato.")
+            return TransferBIMAttack(
+                detector=detector_wrapper,          
+                detector_wrapper=detector_wrapper,
+                dsfd_net=dsfd_net,
+                mean_tensor=mean_tensor,
+                surrogate_net=surrogate_net,
+                device=self.device
+            )
         elif attack_name == "uap":
             raise NotImplementedError("UAP Transfer non ancora implementato.")
+        elif attack_name == "deepfool":
+            raise NotImplementedError("DEEPFOOL Transfer non ancora implementato.")
         else:
             raise ValueError(f"Attacco transfer non supportato o non valido: {attack_name}")
 
