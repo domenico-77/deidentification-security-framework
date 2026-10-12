@@ -13,6 +13,7 @@ from attacks.blackbox.square_attack import SquareAttack
 from attacks.blackbox.simba_attack import SimBA
 from attacks.blackbox.boundary_attack import BoundaryAttack
 from attacks.blackbox.adversarialpatch_attack import AdversarialPatchAttack
+from attacks.blackbox.spsa_attack import SPSAAttack
 
 from data_loaders.lfw import LFWDataset
 
@@ -35,6 +36,19 @@ class BlackBoxEvaluator(BaseEvaluator):
             return BoundaryAttack(detector_wrapper=detector_wrapper, device=self.device, max_iter=200)
         elif attack_name == "advpatch":
             return AdversarialPatchAttack(detector_wrapper=detector_wrapper, device=self.device)
+        elif attack_name == "spsa":
+            # Funzione wrapper per l'anonymizer
+            anonymizer_fn = target.anonymize if hasattr(target, "anonymize") else anonymizer
+            return SPSAAttack(
+                detector_wrapper=detector_wrapper,
+                anonymizer_fn=anonymizer_fn,
+                extract_emb_fn=self.extract_embedding,
+                compute_sim_fn=self.compute_cosine_similarity,
+                device=self.device,
+                n_iters=50,  # 50 iterazioni = 100 query totali
+                lr=2.0,
+                delta=1e-2
+            )
         else:
             raise ValueError(f"Attacco black-box non supportato o non valido: {attack_name}")
 
