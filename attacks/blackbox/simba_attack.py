@@ -1,5 +1,5 @@
 import torch
-from attacks.blackbox.base import BaseBlackBoxAttack
+from attacks.blackbox.base_blackbox import BaseBlackBoxAttack
 
 class SimBA(BaseBlackBoxAttack):
     """
