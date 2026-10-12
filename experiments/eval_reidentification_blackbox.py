@@ -69,7 +69,14 @@ class BlackBoxEvaluator(BaseEvaluator):
         target, anonymizer, detector_wrapper, dsfd_net, mean_tensor = self.setup_target(args.model)
 
         # 2. Istanziazione dell'attacco black-box tramite factory personalizzata
-        attack = self.get_attack_instance(args.attack, detector_wrapper=detector_wrapper, epsilon=args.epsilon)
+        #attack = self.get_attack_instance(args.attack, detector_wrapper=detector_wrapper, epsilon=args.epsilon)
+        attack = self.get_attack_instance(
+            args.attack, 
+            detector_wrapper=detector_wrapper, 
+            target=target, 
+            anonymizer=anonymizer, 
+            epsilon=args.epsilon
+        )
 
         # 3. Caricamento dataset LFW
         dataset = LFWDataset(root_dir="/kaggle/input/datasets/jessicali9530/lfw-dataset/lfw-deepfunneled/lfw-deepfunneled")
