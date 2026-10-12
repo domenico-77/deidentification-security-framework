@@ -25,7 +25,7 @@ class BlackBoxEvaluator(BaseEvaluator):
     def __init__(self):
         super().__init__()
 
-    def get_attack_instance(self, attack_name, detector_wrapper, epsilon):
+    def get_attack_instance(self, attack_name, detector_wrapper, target, anonymizer, epsilon):
         """Factory per selezionare l'attacco black-box desiderato."""
         attack_name = attack_name.lower()
         if attack_name == "square":
@@ -37,7 +37,6 @@ class BlackBoxEvaluator(BaseEvaluator):
         elif attack_name == "advpatch":
             return AdversarialPatchAttack(detector_wrapper=detector_wrapper, device=self.device)
         elif attack_name == "spsa":
-            # Funzione wrapper per l'anonymizer
             anonymizer_fn = target.anonymize if hasattr(target, "anonymize") else anonymizer
             return SPSAAttack(
                 detector_wrapper=detector_wrapper,
@@ -45,13 +44,13 @@ class BlackBoxEvaluator(BaseEvaluator):
                 extract_emb_fn=self.extract_embedding,
                 compute_sim_fn=self.compute_cosine_similarity,
                 device=self.device,
-                n_iters=50,  # 50 iterazioni = 100 query totali
+                n_iters=50,
                 lr=2.0,
                 delta=1e-2
             )
         else:
             raise ValueError(f"Attacco black-box non supportato o non valido: {attack_name}")
-
+            
     def run_blackbox(self):
         parser = argparse.ArgumentParser(description="Valutazione Identity Leakage & Re-identification (Black-Box Mode)")
         parser.add_argument("--attack", type=str, default="square", choices=["square", "simba", "boundary", "advpatch", "spsa"], help="Tipo di attacco black-box da testare")
