@@ -1,6 +1,6 @@
 import torch
 import numpy as np
-from attacks.blackbox.base import BaseBlackBoxAttack
+from attacks.blackbox.base_blackbox import BaseBlackBoxAttack
 
 class SquareAttack(BaseBlackBoxAttack):
     """
