@@ -1,10 +1,8 @@
 import torch
+import numpy as np
 from attacks.blackbox.base_blackbox import BaseBlackBoxAttack
 
 class SimBA(BaseBlackBoxAttack):
-    """
-    SimBA (Simple Black-Box Attack).
-    """
     def __init__(self, detector_wrapper, device="cuda", n_queries=1000, step_size=2.0):
         super().__init__(detector_wrapper=detector_wrapper, device=device, n_queries=n_queries)
         self.step_size = step_size
@@ -22,14 +20,15 @@ class SimBA(BaseBlackBoxAttack):
             return x_best, True, 0
 
         _, c, h, w = x_best.shape
-        queries = 0
+        ymin, xmin, ymax, xmax = self._get_face_roi(x_orig)
 
+        queries = 0
         for query_idx in range(1, self.n_queries + 1):
             queries = query_idx
 
             c_idx = torch.randint(0, c, (1,)).item()
-            h_idx = torch.randint(0, h, (1,)).item()
-            w_idx = torch.randint(0, w, (1,)).item()
+            h_idx = np.random.randint(ymin, ymax)
+            w_idx = np.random.randint(xmin, xmax)
 
             direction = torch.zeros((1, c, h, w), device=self.device)
             direction[0, c_idx, h_idx, w_idx] = 1.0
