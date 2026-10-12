@@ -13,29 +13,39 @@ class BaseBlackBoxAttack(ABC):
 
     def _parse_detections(self, dets):
         """
-        Estrae i box di rilevamento indipendentemente dal tipo restituito dal detector_wrapper.
-        Restituisce una lista di box (ciascuno con confidenza).
+        Estrae i box di rilevamento in modo sicuro dall'oggetto FaceDetection o da altri formati.
         """
         if dets is None:
             return []
         
-        # Se è una tupla/lista (es. bounding boxes, confidenze)
+        # Se l'oggetto ha un attributo noto che contiene i box (es. .boxes, .data, ecc.)
+        for attr in ["boxes", "detections", "data", "dets"]:
+            if hasattr(dets, attr):
+                val = getattr(dets, attr)
+                if val is not None:
+                    dets = val
+                    break
+
+        if isinstance(dets, torch.Tensor):
+            dets = dets.detach().cpu().numpy()
+        
+        if hasattr(dets, "cpu") and callable(dets.cpu):
+            dets = dets.cpu().numpy()
+
         if isinstance(dets, (list, tuple)):
             boxes = []
             for item in dets:
                 if isinstance(item, torch.Tensor):
                     item = item.detach().cpu().numpy()
-                if hasattr(item, "__len__") and len(item) > 0:
+                if hasattr(item, "__len__") and not isinstance(item, (str, bytes)):
                     for box in item:
-                        if len(box) >= 5:
+                        if hasattr(box, "__len__") and len(box) >= 5:
                             boxes.append(box)
+                elif hasattr(item, "__len__") and len(item) >= 5:
+                    boxes.append(item)
             return boxes
         
-        # Se è un tensore o array diretto
-        if isinstance(dets, torch.Tensor):
-            dets = dets.detach().cpu().numpy()
-        
-        if hasattr(dets, "__len__") and len(dets) > 0:
+        if hasattr(dets, "shape") and len(dets) > 0:
             return list(dets)
             
         return []
