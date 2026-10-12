@@ -13,24 +13,39 @@ class BaseBlackBoxAttack(ABC):
 
     def _parse_detections(self, dets):
         """
-        Estrae i box di rilevamento in modo sicuro dall'oggetto FaceDetection o da altri formati.
+        Estrae i box di rilevamento in modo sicuro da qualsiasi tipo di oggetto restituito dal detector.
         """
         if dets is None:
             return []
         
-        # Se l'oggetto ha un attributo noto che contiene i box (es. .boxes, .data, ecc.)
-        for attr in ["boxes", "detections", "data", "dets"]:
-            if hasattr(dets, attr):
-                val = getattr(dets, attr)
-                if val is not None:
-                    dets = val
-                    break
-
+        # Se è già un tensore o un array numpy
         if isinstance(dets, torch.Tensor):
             dets = dets.detach().cpu().numpy()
         
         if hasattr(dets, "cpu") and callable(dets.cpu):
             dets = dets.cpu().numpy()
+
+        # Se l'oggetto ha una rappresentazione interna o attributi noti
+        if not isinstance(dets, (list, tuple, np.ndarray, torch.Tensor)):
+            # Cerca tra gli attributi dell'oggetto FaceDetection eventuali array o liste di box
+            found_boxes = []
+            for attr_name in dir(dets):
+                if not attr_name.startswith("_"):
+                    try:
+                        attr_val = getattr(dets, attr_name)
+                        if isinstance(attr_val, (np.ndarray, torch.Tensor, list, tuple)) and len(attr_val) > 0:
+                            found_boxes = attr_val
+                            break
+                    except Exception:
+                        continue
+            if len(found_boxes) > 0:
+                dets = found_boxes
+            else:
+                # Tentativo estremo: se l'oggetto è convertibile in array o stringa numerica
+                try:
+                    dets = np.array(dets)
+                except Exception:
+                    return []
 
         if isinstance(dets, (list, tuple)):
             boxes = []
