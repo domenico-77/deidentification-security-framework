@@ -6,10 +6,10 @@ class AdversarialPatchAttack(BaseBlackBoxAttack):
     def __init__(self, detector_wrapper, device="cuda"):
         super().__init__(detector_wrapper=detector_wrapper, device=device, n_queries=1)
 
-    def perturb(self, img_tensor, epsilon=16.0):
+    def perturb(self, img_tensor, epsilon=255.0):
         """
-        Applica una patch avversaria strutturata sulla regione centrale del volto.
-        Ignora epsilon o lo usa per scalare il contrasto della patch.
+        Applica una patch strutturata aggressiva (pattern a bande geometriche ad alto contrasto)
+        sull'area centrale del volto per forzare l'elusione del detector DSFD.
         """
         img_tensor = img_tensor.to(self.device).float()
         if img_tensor.ndim == 3:
@@ -24,24 +24,30 @@ class AdversarialPatchAttack(BaseBlackBoxAttack):
         face_h = ymax - ymin
         face_w = xmax - xmin
         
-        patch_h = max(10, int(face_h * 0.4))
-        patch_w = max(10, int(face_w * 0.4))
+        # Ampliamo la patch al 60% del volto per distruggere i punti di ancoraggio
+        patch_h = max(20, int(face_h * 0.6))
+        patch_w = max(20, int(face_w * 0.6))
         
         p_ymin = ymin + int((face_h - patch_h) / 2)
         p_xmin = xmin + int((face_w - patch_w) / 2)
-        p_ymax = p_ymin + patch_h
-        p_xmax = p_xmin + patch_w
+        p_ymax = min(h, p_ymin + patch_h)
+        p_xmax = min(w, p_xmin + patch_w)
         
-        # Genera una patch avversaria (può usare epsilon per modulare l'intensità o valori pieni)
-        if epsilon >= 200.0:
-            patch = torch.randint(0, 256, (c, patch_h, patch_w), device=self.device).float()
-        else:
-            # Patch limitata dal budget di epsilon attorno all'immagine originale
-            orig_patch = x_adv[:, :, p_ymin:p_ymax, p_xmin:p_xmax]
-            noise = torch.empty((c, patch_h, patch_w), device=self.device).uniform_(-epsilon, epsilon)
-            patch = torch.clamp(orig_patch + noise, 0.0, 255.0)
-        
+        actual_h = p_ymax - p_ymin
+        actual_w = p_xmax - p_xmin
+
+        # Genera un pattern geometrico aggressivo ad alto contrasto (bande verticali bianche e nere alternate o saturazione estrema)
+        patch = torch.zeros((c, actual_h, actual_w), device=self.device)
+        for i in range(0, actual_w, 8):
+            if (i // 8) % 2 == 0:
+                patch[:, :, i:i+4] = 255.0
+            else:
+                patch[:, :, i:i+4] = 0.0
+
+        # Sovrapponi la patch geometrica pesante sulla ROI
         x_adv[:, :, p_ymin:p_ymax, p_xmin:p_xmax] = patch
         
+        # Verifica se il detector è stato finalmente eluso
         success = self._is_evaded(x_adv)
+        
         return x_adv, success, 1
