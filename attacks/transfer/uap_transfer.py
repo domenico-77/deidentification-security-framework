@@ -137,4 +137,4 @@ class TransferUAPAttack(UAPAttack):
             fooling_rate = (fooled_count / total_images) * 100 if total_images > 0 else 0.0
             print(f"[UAP Transfer Epoch {epoch+1}/{epochs}] Fooling Rate sul dataset: {fooling_rate:.2f}%")
 
-        print("[INFO] Calcolo UAP Transfer guidato dal surrogato completato con successo!")
+        print("[INFO] Calcolo UAP sul surrogato completato con successo!")
