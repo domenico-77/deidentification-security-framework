@@ -104,18 +104,16 @@ class TransferUAPAttack(UAPAttack):
                             loss = self.surrogate_net.compute_adversarial_loss(input_surrogate)
                         else:
                             try:
+                                # Tentativo generico di estrazione output/confidenze dal surrogato
                                 surrogate_out = self.surrogate_net(input_surrogate)
                                 if isinstance(surrogate_out, (list, tuple)):
                                     for item in surrogate_out:
                                         if isinstance(item, torch.Tensor) and item.numel() > 1:
-                                            loss = loss + item.mean()
+                                            loss = loss + item.abs().sum()
                                 elif isinstance(surrogate_out, torch.Tensor):
-                                    loss = surrogate_out.mean()
-                                
-                                if loss.item() == 0.0:
-                                    loss = input_surrogate.abs().sum()
+                                    loss = surrogate_out.abs().sum()
                             except Exception:
-                                loss = (x_adv - img_tensor).norm()
+                                loss = (x_adv - img_tensor).norm() # Fallback loss basata su norma se il forward fallisce
 
                         if not loss.requires_grad:
                             loss = loss.clone().requires_grad_(True)
@@ -129,6 +127,7 @@ class TransferUAPAttack(UAPAttack):
                         if delta_local.grad is not None:
                             with torch.no_grad():
                                 grad_sign = delta_local.grad.sign()
+                                # Per massimizzare la loss del detector (indurre evasione), sommiamo il gradiente invece di sottrarlo
                                 delta_local = delta_local + alpha * grad_sign
                                 delta_local = torch.clamp(delta_local, min=-epsilon, max=epsilon)
                                 delta_local = delta_local.detach()
@@ -153,4 +152,4 @@ class TransferUAPAttack(UAPAttack):
             fooling_rate = (fooled_count / total_images) * 100 if total_images > 0 else 0.0
             print(f"[UAP Transfer Epoch {epoch+1}/{epochs}] Fooling Rate sul dataset: {fooling_rate:.2f}%")
 
-        print("[INFO] Calcolo UAP Transfer guidato dal surrogato completato con successo!")
+        print("[INFO] Calcolo UAP sul surrogato completato con successo!")
