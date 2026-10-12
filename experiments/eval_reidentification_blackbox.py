@@ -10,7 +10,7 @@ from tqdm import tqdm
 
 from eval_reidentification import BaseEvaluator
 from attacks.blackbox.square_attack import SquareAttack
-from attacks.blackbox.simba import SimBA
+from attacks.blackbox.simba_attack import SimBA
 from attacks.blackbox.boundary_attack import BoundaryAttack
 
 from data_loaders.lfw import LFWDataset
