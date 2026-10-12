@@ -12,6 +12,7 @@ from eval_reidentification import BaseEvaluator
 from attacks.blackbox.square_attack import SquareAttack
 from attacks.blackbox.simba_attack import SimBA
 from attacks.blackbox.boundary_attack import BoundaryAttack
+from attacks.blackbox.adversarialpatch_attack import AdversarialPatchAttack
 
 from data_loaders.lfw import LFWDataset
 
@@ -32,12 +33,14 @@ class BlackBoxEvaluator(BaseEvaluator):
             return SimBA(detector_wrapper=detector_wrapper, device=self.device, n_queries=1000)
         elif attack_name == "boundary":
             return BoundaryAttack(detector_wrapper=detector_wrapper, device=self.device, max_iter=200)
+        elif attack_name == "advpatch":
+            return AdversarialPatchAttack(detector_wrapper=detector_wrapper, device=self.device)
         else:
             raise ValueError(f"Attacco black-box non supportato o non valido: {attack_name}")
 
     def run_blackbox(self):
         parser = argparse.ArgumentParser(description="Valutazione Identity Leakage & Re-identification (Black-Box Mode)")
-        parser.add_argument("--attack", type=str, default="square", choices=["square", "simba", "boundary"], help="Tipo di attacco black-box da testare")
+        parser.add_argument("--attack", type=str, default="square", choices=["square", "simba", "boundary", "advpatch"], help="Tipo di attacco black-box da testare")
         parser.add_argument("--model", type=str, default="deeprivacy2", choices=["deeprivacy2"], help="Modello di anonimizzazione target")
         parser.add_argument("--epsilon", type=float, default=16.0, help="Valore di epsilon per la perturbazione")
         parser.add_argument("--num_samples", type=int, default=20, help="Numero di campioni del dataset da valutare")
