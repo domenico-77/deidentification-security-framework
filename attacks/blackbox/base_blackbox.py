@@ -14,41 +14,32 @@ class BaseBlackBoxAttack(ABC):
 
     def _parse_detections(self, dets):
         """
-        Estrae i box di rilevamento in modo sicuro da qualsiasi tipo di oggetto restituito dal detector.
+        Estrae i box di rilevamento gestendo direttamente l'oggetto FaceDetection o tensori.
         """
         if dets is None:
             return []
         
-        # Se è già un tensore o un array numpy
+        # Se l'oggetto è un'istanza di FaceDetection o ha attributi interni con i box
+        for attr in ["boxes", "detections", "data", "dets", "_boxes", "cpu"]:
+            if hasattr(dets, attr):
+                val = getattr(dets, attr)
+                if callable(val):
+                    try:
+                        val = val()
+                    except Exception:
+                        continue
+                if val is not None and not callable(val):
+                    if isinstance(val, (np.ndarray, torch.Tensor, list, tuple)) and len(val) > 0:
+                        dets = val
+                        break
+
         if isinstance(dets, torch.Tensor):
             dets = dets.detach().cpu().numpy()
         
         if hasattr(dets, "cpu") and callable(dets.cpu):
             dets = dets.cpu().numpy()
 
-        # Se l'oggetto ha una rappresentazione interna o attributi noti
-        if not isinstance(dets, (list, tuple, np.ndarray, torch.Tensor)):
-            # Cerca tra gli attributi dell'oggetto FaceDetection eventuali array o liste di box
-            found_boxes = []
-            for attr_name in dir(dets):
-                if not attr_name.startswith("_"):
-                    try:
-                        attr_val = getattr(dets, attr_name)
-                        if isinstance(attr_val, (np.ndarray, torch.Tensor, list, tuple)) and len(attr_val) > 0:
-                            found_boxes = attr_val
-                            break
-                    except Exception:
-                        continue
-            if len(found_boxes) > 0:
-                dets = found_boxes
-            else:
-                # Tentativo estremo: se l'oggetto è convertibile in array o stringa numerica
-                try:
-                    dets = np.array(dets)
-                except Exception:
-                    return []
-
-        if isinstance(dets, (list, tuple)):
+        if isinstance(dets, (list, tuple, np.ndarray)):
             boxes = []
             for item in dets:
                 if isinstance(item, torch.Tensor):
@@ -60,9 +51,6 @@ class BaseBlackBoxAttack(ABC):
                 elif hasattr(item, "__len__") and len(item) >= 5:
                     boxes.append(item)
             return boxes
-        
-        if hasattr(dets, "shape") and len(dets) > 0:
-            return list(dets)
             
         return []
 
