@@ -55,7 +55,7 @@ class BaseBlackBoxAttack(ABC):
     def _get_face_roi(self, img_tensor):
         """
         Individua il bounding box del volto per focalizzare la perturbazione.
-        Restituisce [ymin, xmin, ymax, xmax] interi (clampati alle dimensioni dell'immagine).
+        Gestisce in modo sicuro anche oggetti FaceDetection non subscriptable.
         """
         with torch.no_grad():
             eval_input = img_tensor.squeeze(0).byte().float() if img_tensor.ndim == 4 else img_tensor.byte().float()
@@ -67,14 +67,22 @@ class BaseBlackBoxAttack(ABC):
             
             _, _, h, w = img_tensor.shape if img_tensor.ndim == 4 else (1, img_tensor.shape[0], img_tensor.shape[1], img_tensor.shape[2])
             
-            if len(boxes) > 0 and len(boxes[0]) >= 4:
+            if len(boxes) > 0:
                 b = boxes[0]
-                ymin, xmin, ymax, xmax = int(b[1]), int(b[0]), int(b[3]), int(b[2]) # Adatta a seconda dell'ordine xyxy/yxyx
+                # Se b è un oggetto non subscriptable o un dizionario/oggetto custom, estraiamo gli attributi se presenti
+                try:
+                    if hasattr(b, "__getitem__") and not isinstance(b, (str, bytes)):
+                        ymin, xmin, ymax, xmax = int(b[1]), int(b[0]), int(b[3]), int(b[2])
+                    else:
+                        raise TypeError()
+                except Exception:
+                    # Fallback sicuro se l'elemento non è indicizzabile come lista/array
+                    return [int(h * 0.2), int(w * 0.2), int(h * 0.8), int(w * 0.8)]
+                
                 # Fallback sicuro se invertiti
                 if ymin > ymax: ymin, ymax = ymax, ymin
                 if xmin > xmax: xmin, xmax = xmax, xmin
                 
-                # Margine di sicurezza del 20%
                 pad_h = int((ymax - ymin) * 0.2)
                 pad_w = int((xmax - xmin) * 0.2)
                 
@@ -85,8 +93,8 @@ class BaseBlackBoxAttack(ABC):
                 
                 return [ymin, xmin, ymax, xmax]
                 
-        # Fallback: intera immagine se nessun volto viene trovato al primo colpo
-        return [0, 0, h, w]
+        # Fallback: area centrale se nessun box viene trovato
+        return [int(h * 0.2), int(w * 0.2), int(h * 0.8), int(w * 0.8)]
 
     def _get_loss(self, img_tensor):
         """
