@@ -104,16 +104,18 @@ class TransferUAPAttack(UAPAttack):
                             loss = self.surrogate_net.compute_adversarial_loss(input_surrogate)
                         else:
                             try:
-                                # Tentativo generico di estrazione output/confidenze dal surrogato
                                 surrogate_out = self.surrogate_net(input_surrogate)
                                 if isinstance(surrogate_out, (list, tuple)):
                                     for item in surrogate_out:
                                         if isinstance(item, torch.Tensor) and item.numel() > 1:
-                                            loss = loss + item.abs().sum()
+                                            loss = loss + item.mean()
                                 elif isinstance(surrogate_out, torch.Tensor):
-                                    loss = surrogate_out.abs().sum()
+                                    loss = surrogate_out.mean()
+                                
+                                if loss.item() == 0.0:
+                                    loss = input_surrogate.abs().sum()
                             except Exception:
-                                loss = (x_adv - img_tensor).norm() # Fallback loss basata su norma se il forward fallisce
+                                loss = (x_adv - img_tensor).norm()
 
                         if not loss.requires_grad:
                             loss = loss.clone().requires_grad_(True)
@@ -127,7 +129,6 @@ class TransferUAPAttack(UAPAttack):
                         if delta_local.grad is not None:
                             with torch.no_grad():
                                 grad_sign = delta_local.grad.sign()
-                                # Per massimizzare la loss del detector (indurre evasione), sommiamo il gradiente invece di sottrarlo
                                 delta_local = delta_local + alpha * grad_sign
                                 delta_local = torch.clamp(delta_local, min=-epsilon, max=epsilon)
                                 delta_local = delta_local.detach()
