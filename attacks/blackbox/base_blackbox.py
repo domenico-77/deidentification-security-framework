@@ -14,45 +14,48 @@ class BaseBlackBoxAttack(ABC):
 
     def _parse_detections(self, dets):
         """
-        Estrae i box di rilevamento gestendo direttamente l'oggetto FaceDetection o tensori.
+        Estrae i box di rilevamento gestendo in modo sicuro l'oggetto FaceDetection.
         """
         if dets is None:
             return []
         
-        # Se l'oggetto è un'istanza di FaceDetection o ha attributi interni con i box
-        for attr in ["boxes", "detections", "data", "dets", "_boxes", "cpu"]:
-            if hasattr(dets, attr):
-                val = getattr(dets, attr)
-                if callable(val):
+        # Se l'oggetto ha un metodo o proprietà per convertirsi in numpy o tensor
+        for meth in ["cpu", "numpy", "detach", "tolist"]:
+            if hasattr(dets, meth) and callable(getattr(dets, meth)):
+                try:
+                    dets = getattr(dets, meth)()
+                except Exception:
+                    continue
+
+        # Se l'oggetto è iterabile direttamente
+        try:
+            iterator = iter(dets)
+        except TypeError:
+            # Non iterabile: proviamo a cercare attributi interni o a convertirlo via dir()
+            boxes = []
+            for attr in dir(dets):
+                if not attr.startswith("_"):
                     try:
-                        val = val()
+                        val = getattr(dets, attr)
+                        if isinstance(val, (np.ndarray, list, tuple)) and len(val) > 0:
+                            for item in val:
+                                if hasattr(item, "__len__") and len(item) >= 5:
+                                    boxes.append(item)
                     except Exception:
                         continue
-                if val is not None and not callable(val):
-                    if isinstance(val, (np.ndarray, torch.Tensor, list, tuple)) and len(val) > 0:
-                        dets = val
-                        break
-
-        if isinstance(dets, torch.Tensor):
-            dets = dets.detach().cpu().numpy()
-        
-        if hasattr(dets, "cpu") and callable(dets.cpu):
-            dets = dets.cpu().numpy()
-
-        if isinstance(dets, (list, tuple, np.ndarray)):
-            boxes = []
-            for item in dets:
-                if isinstance(item, torch.Tensor):
-                    item = item.detach().cpu().numpy()
-                if hasattr(item, "__len__") and not isinstance(item, (str, bytes)):
-                    for box in item:
-                        if hasattr(box, "__len__") and len(box) >= 5:
-                            boxes.append(box)
-                elif hasattr(item, "__len__") and len(item) >= 5:
-                    boxes.append(item)
             return boxes
-            
-        return []
+
+        boxes = []
+        for item in dets:
+            if isinstance(item, torch.Tensor):
+                item = item.detach().cpu().numpy()
+            if hasattr(item, "__len__") and not isinstance(item, (str, bytes)):
+                for box in item:
+                    if hasattr(box, "__len__") and len(box) >= 5:
+                        boxes.append(box)
+            elif hasattr(item, "__len__") and len(item) >= 5:
+                boxes.append(item)
+        return boxes
 
     def _get_loss(self, img_tensor):
         """
