@@ -11,6 +11,35 @@ class BaseBlackBoxAttack(ABC):
         self.detector_wrapper = detector_wrapper
         self.n_queries = n_queries
 
+    def _parse_detections(self, dets):
+        """
+        Estrae i box di rilevamento indipendentemente dal tipo restituito dal detector_wrapper.
+        Restituisce una lista di box (ciascuno con confidenza).
+        """
+        if dets is None:
+            return []
+        
+        # Se è una tupla/lista (es. bounding boxes, confidenze)
+        if isinstance(dets, (list, tuple)):
+            boxes = []
+            for item in dets:
+                if isinstance(item, torch.Tensor):
+                    item = item.detach().cpu().numpy()
+                if hasattr(item, "__len__") and len(item) > 0:
+                    for box in item:
+                        if len(box) >= 5:
+                            boxes.append(box)
+            return boxes
+        
+        # Se è un tensore o array diretto
+        if isinstance(dets, torch.Tensor):
+            dets = dets.detach().cpu().numpy()
+        
+        if hasattr(dets, "__len__") and len(dets) > 0:
+            return list(dets)
+            
+        return []
+
     def _get_loss(self, img_tensor):
         """
         Calcola una loss proxy score-based basata sulla somma delle confidenze dei box rilevati.
@@ -21,17 +50,17 @@ class BaseBlackBoxAttack(ABC):
                 eval_input = eval_input[0]
             
             dets = self.detector_wrapper(eval_input)
-            if dets is None or len(dets) == 0 or len(dets[0]) == 0:
+            boxes = self._parse_detections(dets)
+            
+            if len(boxes) == 0:
                 return 0.0  # Faccia evitata con successo (loss minima)
             
             score_sum = 0.0
-            for det in dets:
-                if len(det) > 0:
-                    for box in det:
-                        if len(box) >= 5:
-                            score_sum += float(box[4])
-                        else:
-                            score_sum += 1.0
+            for box in boxes:
+                if len(box) >= 5:
+                    score_sum += float(box[4])
+                else:
+                    score_sum += 1.0
             return score_sum
 
     def _is_evaded(self, img_tensor):
@@ -43,7 +72,8 @@ class BaseBlackBoxAttack(ABC):
             if eval_input.ndim == 4:
                 eval_input = eval_input[0]
             dets = self.detector_wrapper(eval_input)
-            return dets is None or len(dets) == 0 or len(dets[0]) == 0
+            boxes = self._parse_detections(dets)
+            return len(boxes) == 0
 
     @abstractmethod
     def perturb(self, img_tensor, epsilon=16.0):
