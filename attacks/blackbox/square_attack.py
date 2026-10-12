@@ -3,9 +3,6 @@ import numpy as np
 from attacks.blackbox.base_blackbox import BaseBlackBoxAttack
 
 class SquareAttack(BaseBlackBoxAttack):
-    """
-    Square Attack (Score-based Black-Box Attack).
-    """
     def __init__(self, detector_wrapper, device="cuda", n_queries=1000, p_init=0.8):
         super().__init__(detector_wrapper=detector_wrapper, device=device, n_queries=n_queries)
         self.p_init = p_init
@@ -23,16 +20,18 @@ class SquareAttack(BaseBlackBoxAttack):
             return x_best, True, 0
 
         _, c, h, w = x_best.shape
-        queries = 0
+        ymin, xmin, ymax, xmax = self._get_face_roi(x_orig)
+        roi_h, roi_w = ymax - ymin, xmax - xmin
 
+        queries = 0
         for query_idx in range(1, self.n_queries + 1):
             queries = query_idx
             
-            side_len = int(np.ceil(np.sqrt(self.p_init) * h))
-            side_len = max(1, min(side_len, h))
+            side_len = int(np.ceil(np.sqrt(self.p_init) * min(roi_h, roi_w)))
+            side_len = max(1, min(side_len, min(roi_h, roi_w)))
             
-            h_start = np.random.randint(0, h - side_len + 1)
-            w_start = np.random.randint(0, w - side_len + 1)
+            h_start = np.random.randint(ymin, max(ymin + 1, ymax - side_len + 1))
+            w_start = np.random.randint(xmin, max(xmin + 1, xmax - side_len + 1))
             
             x_try = x_best.clone()
             perturbation = torch.empty((c, side_len, side_len), device=self.device).uniform_(-epsilon, epsilon)
