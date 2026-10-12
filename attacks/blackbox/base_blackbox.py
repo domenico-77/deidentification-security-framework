@@ -14,49 +14,52 @@ class BaseBlackBoxAttack(ABC):
 
     def _parse_detections(self, dets):
         """
-        Estrae i box di rilevamento gestendo in modo sicuro l'oggetto FaceDetection.
+        Estrae i box di rilevamento gestendo robustamente l'oggetto FaceDetection.
         """
         if dets is None:
             return []
         
-        # Se l'oggetto ha un metodo o proprietà per convertirsi in numpy o tensor
-        for meth in ["cpu", "numpy", "detach", "tolist"]:
-            if hasattr(dets, meth) and callable(getattr(dets, meth)):
-                try:
-                    dets = getattr(dets, meth)()
-                except Exception:
-                    continue
+        # Se l'oggetto ha una proprietà o metodo numpy / tensor
+        if hasattr(dets, "numpy") and callable(dets.numpy):
+            try:
+                dets = dets.numpy()
+            except Exception:
+                pass
 
-        # Se l'oggetto è iterabile direttamente
-        try:
-            iterator = iter(dets)
-        except TypeError:
-            # Non iterabile: proviamo a cercare attributi interni o a convertirlo via dir()
-            boxes = []
-            for attr in dir(dets):
-                if not attr.startswith("_"):
-                    try:
-                        val = getattr(dets, attr)
-                        if isinstance(val, (np.ndarray, list, tuple)) and len(val) > 0:
-                            for item in val:
-                                if hasattr(item, "__len__") and len(item) >= 5:
-                                    boxes.append(item)
-                    except Exception:
-                        continue
+        # Se è già un tensore PyTorch
+        if isinstance(dets, torch.Tensor):
+            dets = dets.detach().cpu().numpy()
+
+        # Se è un numpy array
+        if isinstance(dets, np.ndarray):
+            if dets.size == 0:
+                return []
+            return dets.tolist()
+
+        # Se è un oggetto FaceDetection, proviamo a estrarre i box dagli attributi interni standard
+        boxes = []
+        for attr in ["boxes", "detections", "data", "dets", "_boxes", "pred_boxes"]:
+            if hasattr(dets, attr):
+                val = getattr(dets, attr)
+                if val is not None:
+                    if isinstance(val, torch.Tensor):
+                        val = val.detach().cpu().numpy()
+                    if isinstance(val, np.ndarray):
+                        val = val.tolist()
+                    if isinstance(val, (list, tuple)):
+                        boxes.extend(val)
+
+        if len(boxes) > 0:
             return boxes
 
-        boxes = []
-        for item in dets:
-            if isinstance(item, torch.Tensor):
-                item = item.detach().cpu().numpy()
-            if hasattr(item, "__len__") and not isinstance(item, (str, bytes)):
-                for box in item:
-                    if hasattr(box, "__len__") and len(box) >= 5:
-                        boxes.append(box)
-            elif hasattr(item, "__len__") and len(item) >= 5:
-                boxes.append(item)
-        return boxes
-
+        # Tentativo finale: se l'oggetto stesso è una tupla o lista di box
+        if isinstance(dets, (list, tuple)):
+            for item in dets:
+                if hasattr(item, "__len__") and not isinstance(item, (str, bytes)):
+                    boxes.append(item)
+            return boxes
+        return []
+        
     def _get_loss(self, img_tensor):
         """
         Calcola una loss proxy score-based basata sulla somma delle confidenze dei box rilevati.
