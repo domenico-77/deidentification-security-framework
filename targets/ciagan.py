@@ -41,15 +41,16 @@ class CIAGANTarget(BaseDeidentificationTarget):
         self.detector = self._load_detector()
 
     def _load_model(self):
-        """Inizializza l'architettura del generatore di CIAGAN e carica i pesi dal checkpoint."""
+        """Inizializza l'architettura del generatore di CIAGAN da arch_unet_flex e carica i pesi."""
         try:
-            from source.arch.generator import Generator
+            from source.arch.arch_unet_flex import UNet as Generator
         except ImportError:
             try:
-                from arch.generator import Generator
+                from arch.arch_unet_flex import UNet as Generator
             except ImportError as e:
-                raise ImportError(f"[ERRORE] Impossibile importare l'architettura del generatore CIAGAN: {e}")
+                raise ImportError(f"[ERRORE] Impossibile importare l'architettura U-Net di CIAGAN: {e}")
 
+        # Inizializza il modello (specificando i parametri di default se richiesti dall'architettura)
         model = Generator()
         
         checkpoint_path = ciagan_models_dir / "modelG_ciagan.pth"
