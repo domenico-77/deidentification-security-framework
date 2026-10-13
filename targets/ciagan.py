@@ -38,6 +38,7 @@ class CIAGANTarget(BaseDeidentificationTarget):
     def __init__(self, device='cuda'):
         self.device = torch.device(device if torch.cuda.is_available() else "cpu")
         self.model = self._load_model()
+        self.detector = self._load_detector()
 
     def _load_model(self):
         """Inizializza l'architettura del generatore di CIAGAN e carica i pesi dal checkpoint."""
@@ -69,12 +70,31 @@ class CIAGANTarget(BaseDeidentificationTarget):
         model.eval()
         return model
 
+    def _load_detector(self):
+        """Carica il detector DSFD per la compatibilità con il BenchmarkRunner."""
+        try:
+            from face_detection import FD
+            dsfd_path = None
+            if KAGGLE_INPUT.exists():
+                matches = list(KAGGLE_INPUT.glob("**/WIDERFace_DSFD_RES152.pth"))
+                if matches:
+                    dsfd_path = matches[0]
+            
+            if dsfd_path and dsfd_path.exists():
+                import face_detection.dsfd.detect as dsfd_detect
+                dsfd_detect.model_url = str(dsfd_path)
+                dsfd_detect.load_state_dict_from_url = lambda url, *args, **kwargs: torch.load(str(dsfd_path), map_location=kwargs.get("map_location", "cpu"))
+            
+            detector = FD("dsfd", device=self.device)
+            return detector
+        except Exception as e:
+            print(f"[WARNING] Impossibile inizializzare il detector DSFD in CIAGANTarget: {e}")
+            return None
+
     def process_image(self, image_tensor: torch.Tensor) -> torch.Tensor:
         """
         Processa l'immagine tensoriale attraverso la pipeline di CIAGAN
-        rispettando rigorosamente l'interfaccia BaseDeidentificationTarget.
-        Input: tensore in formato [C, H, W] con valori in [0, 1] o [0, 255].
-        Output: tensore in formato [C, H, W] con valori normalizzati in [0, 1].
+        rispettando l'interfaccia BaseDeidentificationTarget.
         """
         device = self.device
         img = image_tensor.detach().clone()
@@ -91,9 +111,7 @@ class CIAGANTarget(BaseDeidentificationTarget):
 
         with torch.no_grad():
             normalized_input = (img_batch / 127.5) - 1.0
-            
             output_tensor = self.model(normalized_input)
-            
             output_tensor = (output_tensor + 1.0) / 2.0
             output_tensor = torch.clamp(output_tensor, 0.0, 1.0)
 
