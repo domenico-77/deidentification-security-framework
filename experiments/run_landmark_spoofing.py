@@ -1,4 +1,3 @@
-%%writefile experiments/run_landmark_spoofing.py
 import sys
 from pathlib import Path
 
