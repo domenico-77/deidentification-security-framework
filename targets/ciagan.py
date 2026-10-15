@@ -36,21 +36,52 @@ for p in (ciagan_repo_root, ciagan_source_dir):
 from targets.base_target import BaseDeidentificationTarget
 
 
-# Questi valori seguono la pipeline di preprocessing del repository CIAGAN.
+# Costanti di preprocessing ufficiali CIAGAN
 CIAGAN_W = 178
 CIAGAN_H = 218
 MODEL_SIZE = 128
-PRE_RESIZE = 144  # 128 * 1.125, come in util_data.ImageDataset
-CENTER_OFFSET = (PRE_RESIZE - MODEL_SIZE) // 2  # 8 pixel per lato
+PRE_RESIZE = 144  # 128 * 1.125
+CENTER_OFFSET = (PRE_RESIZE - MODEL_SIZE) // 2
 NUM_IDENTITIES = 1200
 
 
+class DlibDetectorWrapper:
+    """Wrapper compatibile con BenchmarkRunner che utilizza dlib per rilevare i volti."""
+    def __init__(self, detector, device):
+        self.detector = detector
+        self.device = device
+
+    def __call__(self, img_tensor):
+        if img_tensor.ndim == 4:
+            img = img_tensor[0]
+        else:
+            img = img_tensor
+        
+        if img.max() <= 1.0:
+            img = img * 255.0
+        img_np = img.detach().cpu().permute(1, 2, 0).numpy().astype(np.uint8)
+        gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
+        
+        rects = self.detector(gray, 1)
+        boxes = []
+        for r in rects:
+            boxes.append([r.left(), r.top(), r.right(), r.bottom(), 1.0])
+        
+        if len(boxes) > 0:
+            return [torch.tensor(boxes, device=self.device, dtype=torch.float32)]
+        return [None]
+
+
 class CIAGANTarget(BaseDeidentificationTarget):
-    def __init__(self, device="cuda"):
+    def __init__(self, models_dir=None, device="cuda"):
         self.device = torch.device(device if device == "cpu" or torch.cuda.is_available() else "cpu")
+        if models_dir is not None:
+            global ciagan_models_dir
+            ciagan_models_dir = Path(models_dir)
+
         self.model = self._load_model()
 
-        self.detector = dlib.get_frontal_face_detector()
+        self.dlib_detector = dlib.get_frontal_face_detector()
         predictor_path = ciagan_source_dir / "shape_predictor_68_face_landmarks.dat"
         if not predictor_path.exists():
             fallback = Path(
@@ -66,6 +97,11 @@ class CIAGANTarget(BaseDeidentificationTarget):
                 f"{predictor_path}. Verifica la presenza di shape_predictor_68_face_landmarks.dat."
             )
         self.predictor = dlib.shape_predictor(str(predictor_path))
+
+        # Esposizione delle interfacce per BenchmarkRunner
+        self.detector_wrapper = DlibDetectorWrapper(self.dlib_detector, self.device)
+        self.pipeline = self
+        self.anonymizer = self
 
     def _load_model(self):
         from arch.arch_unet_flex import Generator
@@ -93,7 +129,6 @@ class CIAGANTarget(BaseDeidentificationTarget):
             state[clean_key] = value
 
         expected = model.state_dict()
-
         converted = {}
         derived_v = []
         ignored_derived_weight = []
@@ -152,6 +187,15 @@ class CIAGANTarget(BaseDeidentificationTarget):
         model.to(self.device)
         model.eval()
         return model
+
+    def __call__(self, img_tensor, truncation_value=1.0, multi_modal_truncation=False, amp=False, **kwargs):
+        """Interfaccia callable compatibile con il BenchmarkRunner."""
+        if img_tensor.max() > 1.0:
+            img_tensor = img_tensor.float() / 255.0
+        else:
+            img_tensor = img_tensor.float()
+        output_tensor = self.process_image(img_tensor)
+        return {"im": (output_tensor * 255.0).byte()}
 
     @staticmethod
     def _to_rgb_float(image_tensor: torch.Tensor) -> torch.Tensor:
@@ -214,7 +258,6 @@ class CIAGANTarget(BaseDeidentificationTarget):
 
         lndm_model = self._official_preprocess(lndm_rgb)
 
-        # Maschera continua standard CIAGAN
         mask_rgb = np.full((CIAGAN_H, CIAGAN_W, 3), 255, dtype=np.uint8)
         contour = [
             (pt(0)[0], pt(19)[1]),
@@ -236,7 +279,7 @@ class CIAGANTarget(BaseDeidentificationTarget):
         orig_h, orig_w = img_rgb.shape[:2]
 
         gray = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2GRAY)
-        detections = self.detector(gray, 1)
+        detections = self.dlib_detector(gray, 1)
         if not detections:
             print("[CIAGAN][WARN] Nessun volto rilevato: restituisco l'immagine originale.")
             return img_float
@@ -272,6 +315,13 @@ class CIAGANTarget(BaseDeidentificationTarget):
         crop_178x218 = cv2.resize(
             raw_crop, (CIAGAN_W, CIAGAN_H), interpolation=cv2.INTER_CUBIC
         )
+        
+        lab_in = cv2.cvtColor(crop_178x218, cv2.COLOR_RGB2LAB)
+        l_in, a_in, b_in = cv2.split(lab_in)
+        clahe_in = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8))
+        l_in = clahe_in.apply(l_in)
+        crop_178x218 = cv2.cvtColor(cv2.merge((l_in, a_in, b_in)), cv2.COLOR_LAB2RGB)
+
         face_model_rgb = self._official_preprocess(crop_178x218)
         lndm_model_rgb, mask_np = self._make_conditioning(
             shape, crop_left, crop_top, crop_width, crop_height
@@ -290,7 +340,7 @@ class CIAGANTarget(BaseDeidentificationTarget):
             .repeat(1, 3, 1, 1).to(self.device)
         )
 
-        output_id = int(np.random.randint(0, NUM_IDENTITIES))
+        output_id = 750
         labels = torch.zeros((1, NUM_IDENTITIES), dtype=torch.float32, device=self.device)
         labels[0, output_id] = 1.0
 
@@ -299,8 +349,7 @@ class CIAGANTarget(BaseDeidentificationTarget):
                 (lndm_tensor, face_tensor * (1.0 - mask_tensor)), dim=1
             )
             generated = self.model(model_input, onehot=labels)
-
-            # Usiamo direttamente l'output generato interamente dalla GAN (senza mescolarlo con il volto originale)
+            
             output = torch.clamp(generated, 0.0, 1.0)
 
         output_rgb = (
@@ -315,7 +364,7 @@ class CIAGANTarget(BaseDeidentificationTarget):
         ix1 = max(0, min(ix1, img_pad.shape[1] - 1))
         ix2 = max(ix1 + 1, min(ix2, img_pad.shape[1]))
         iy1 = max(0, min(iy1, img_pad.shape[0] - 1))
-        iy2 = max(iy1 + 1, min(iy2, img_pad.shape[0]))
+        iy2 = max(iy2 + 1, min(iy2, img_pad.shape[0]))
         region_w, region_h = ix2 - ix1, iy2 - iy1
 
         generated_high = cv2.resize(
@@ -324,22 +373,18 @@ class CIAGANTarget(BaseDeidentificationTarget):
 
         original_region = img_pad[iy1:iy2, ix1:ix2].astype(np.float32)
 
-        # Creiamo una maschera di fusione basata sul convex hull dei landmark per escludere il cappello
         hull_mask = np.zeros((MODEL_SIZE, MODEL_SIZE), dtype=np.float32)
         pts_hull = np.array([[shape.part(i).x, shape.part(i).y] for i in range(68)], dtype=np.float32)
-        # Rimappiamo i punti nel sistema di coordinate 128x128 del modello
         pts_hull[:, 0] = (pts_hull[:, 0] + pad - ix1) * (MODEL_SIZE / float(region_w))
         pts_hull[:, 1] = (pts_hull[:, 1] + pad - iy1) * (MODEL_SIZE / float(region_h))
         hull = cv2.convexHull(pts_hull.astype(np.int32))
         cv2.fillConvexPoly(hull_mask, hull, 1.0)
         
-        # Sfumatura morbida per eliminare qualsiasi stacco geometrico
         hull_mask = cv2.GaussianBlur(hull_mask, (21, 21), 0)
         alpha_high = cv2.resize(hull_mask, (region_w, region_h), interpolation=cv2.INTER_LINEAR)
         
         mask_3ch = np.clip(alpha_high, 0.0, 1.0)[..., None]
         
-        # Color matching locale per unire perfettamente le tonalità della pelle
         gen_mean = (generated_high * mask_3ch).sum(axis=(0, 1)) / (mask_3ch.sum() + 1e-5)
         orig_mean = (original_region * mask_3ch).sum(axis=(0, 1)) / (mask_3ch.sum() + 1e-5)
         
