@@ -1,7 +1,3 @@
 target:
   name: ciagan
-  type: ciagan
   models_dir: "/kaggle/input/datasets/domenicovicenti/ciagan-models"
-  
-attack:
-  epsilon: 8.0
