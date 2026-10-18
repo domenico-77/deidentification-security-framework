@@ -11,14 +11,32 @@ class LandmarkSpoofingAttack(BaseAttack):
         self.dlib_detector = target.dlib_detector if target else None
         self.predictor = target.predictor if target else None
 
-    def perturb(self, img_orig_tensor, epsilon=16.0, num_iter=30):
+    def _compute_score(self, candidate, orig_shape, y1, y2, x1, x2):
+        cand_np = candidate.detach().cpu().permute(1, 2, 0).numpy().astype(np.uint8)
+        cand_gray = cv2.cvtColor(cand_np, cv2.COLOR_RGB2GRAY)
+        cand_rects = self.dlib_detector(cand_gray, 1)
+
+        if not cand_rects:
+            return 99999.0, cand_gray, None, True  # Evasione totale
+
+        try:
+            new_shape = self.predictor(cand_gray, cand_rects[0])
+            shift_key = sum(abs(orig_shape.part(k).x - new_shape.part(k).x) + 
+                            abs(orig_shape.part(k).y - new_shape.part(k).y) for k in range(17, 48))
+            total_shift = sum(abs(orig_shape.part(k).x - new_shape.part(k).x) + 
+                              abs(orig_shape.part(k).y - new_shape.part(k).y) for k in range(68))
+            score = float(shift_key * 1.5 + total_shift)
+            return score, cand_gray, new_shape, False
+        except Exception:
+            return 99999.0, cand_gray, None, True
+
+    def perturb(self, img_orig_tensor, epsilon=16.0, num_iter=50):
         img_adv = img_orig_tensor.clone().detach().to(self.device)
         img_orig_tensor = img_orig_tensor.to(self.device)
         
         success = False
         success_iteration = num_iter
 
-        # Estrazione dei landmark di riferimento sull'immagine originale
         img_np = img_orig_tensor.detach().cpu().permute(1, 2, 0).numpy().astype(np.uint8)
         gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
         rects = self.dlib_detector(gray, 1)
@@ -33,49 +51,40 @@ class LandmarkSpoofingAttack(BaseAttack):
         
         best_candidate = img_adv.clone()
         current_perturbation = torch.zeros_like(img_adv)
+        best_score = 0.0
 
         for i in range(num_iter):
-            step = (torch.rand_like(img_adv) * 2.0 - 1.0) * (epsilon / 3.0)
-            
+            # Direzione basata su segno per sfruttare efficacemente la epsilon-ball
+            u = torch.sign(torch.randn_like(img_adv))
             mask = torch.zeros_like(img_adv)
             mask[:, y1:y2, x1:x2] = 1.0
+            u = u * mask
             
-            current_perturbation = current_perturbation + step * mask
-            current_perturbation = torch.clamp(current_perturbation, min=-epsilon, max=epsilon)
+            step_size = epsilon * 0.4
             
-            candidate = torch.clamp(img_orig_tensor + current_perturbation, min=0.0, max=255.0)
+            # Test delle direzioni speculari plus/minus
+            pert_plus = torch.clamp(current_perturbation + step_size * u, min=-epsilon, max=epsilon)
+            pert_minus = torch.clamp(current_perturbation - step_size * u, min=-epsilon, max=epsilon)
+            
+            cand_plus = torch.clamp(img_orig_tensor + pert_plus, min=0.0, max=255.0)
+            cand_minus = torch.clamp(img_orig_tensor + pert_minus, min=0.0, max=255.0)
 
-            cand_np = candidate.detach().cpu().permute(1, 2, 0).numpy().astype(np.uint8)
-            cand_gray = cv2.cvtColor(cand_np, cv2.COLOR_RGB2GRAY)
-            cand_rects = self.dlib_detector(cand_gray, 1)
+            score_plus, _, _, evaded_plus = self._compute_score(cand_plus, orig_shape, y1, y2, x1, x2)
+            score_minus, _, _, evaded_minus = self._compute_score(cand_minus, orig_shape, y1, y2, x1, x2)
 
-            # Se il detector perde il volto, è successo pieno
-            if not cand_rects:
+            if score_plus > score_minus:
+                current_perturbation = pert_plus
+                best_candidate = cand_plus
+                best_score = score_plus
+            else:
+                current_perturbation = pert_minus
+                best_candidate = cand_minus
+                best_score = score_minus
+
+            if evaded_plus or evaded_minus or best_score > 130.0:
                 success = True
                 success_iteration = i + 1
-                best_candidate = candidate
                 break
-
-            # Criterio di Landmark Spoofing: calcolo dello shift geometrico dei 68 punti
-            try:
-                new_shape = self.predictor(cand_gray, cand_rects[0])
-                shift = sum(abs(orig_shape.part(k).x - new_shape.part(k).x) + 
-                            abs(orig_shape.part(k).y - new_shape.part(k).y) for k in range(68))
-                
-                # Se i landmark si spostano significativamente (> 40 pixel cumulativi), la U-Net fallisce il conditioning
-                if shift > 40:
-                    success = True
-                    success_iteration = i + 1
-                    best_candidate = candidate
-                    break
-            except Exception:
-                # Se la distorsione è talmente forte che il predittore fallisce
-                success = True
-                success_iteration = i + 1
-                best_candidate = candidate
-                break
-
-            best_candidate = candidate
 
         return best_candidate, success, success_iteration
 
