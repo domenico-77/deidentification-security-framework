@@ -1,3 +1,4 @@
+%%writefile attacks/blackbox/gradient_free_spatial_attention.py
 import torch
 import numpy as np
 import cv2
@@ -10,9 +11,9 @@ from attacks.base_attack import BaseAttack
 class GradientFreeSpatialAttentionAttack(BaseAttack):
     """
     Gradient-Free Spatial Attention Attack (Black-Box Mode).
-    Mira ad azzerare le detection di dlib concentrando la perturbazione sulle regioni di transizione critiche
-    per il descrittore HOG (occhi, sopracciglia, naso), preservando al contempo la struttura globale
-    per garantire un'alta similarità biometrica con ArcFace.
+    Conduce un'ottimizzazione guidata dallo spostamento dei landmark ma confinata 
+    esclusivamente alle regioni di transizione critiche per HOG (occhi, sopracciglia, naso)
+    tramite una maschera d'attenzione gaussiana.
     """
     def __init__(self, target=None, detector_wrapper=None, device: torch.device = None):
         det = detector_wrapper if detector_wrapper is not None else (getattr(target, 'detector_wrapper', None) if target else None)
@@ -63,16 +64,39 @@ class GradientFreeSpatialAttentionAttack(BaseAttack):
                  max(0, det.left()):min(img_shape[1], det.right())] = 1.0
             return torch.from_numpy(mask).unsqueeze(0).repeat(3, 1, 1)
 
+        # Regioni chiave HOG: sopracciglia (17-26) e occhi/naso (27-47)
         key_indices = list(range(17, 48))
         points = np.array([(shape.part(i).x, shape.part(i).y) for i in key_indices], dtype=np.int32)
         
         hull = cv2.convexHull(points)
         cv2.fillConvexPoly(mask, hull, 1.0)
-        mask = cv2.GaussianBlur(mask, (15, 15), 0)
+        mask = cv2.GaussianBlur(mask, (21, 21), 0)
         
         return torch.from_numpy(mask).unsqueeze(0).repeat(3, 1, 1)
 
-    def perturb(self, img_orig_tensor, epsilon=12.0, num_iter=50):
+    def _compute_score(self, candidate, orig_shape):
+        if self.predictor is None or self.dlib_detector is None:
+            return 0.0, True
+
+        cand_np = candidate.detach().cpu().permute(1, 2, 0).numpy().astype(np.uint8)
+        cand_gray = cv2.cvtColor(cand_np, cv2.COLOR_RGB2GRAY)
+        cand_rects = self.dlib_detector(cand_gray, 1)
+
+        if not cand_rects:
+            return 99999.0, True  # Evasione totale: nessun volto rilevato
+
+        try:
+            new_shape = self.predictor(cand_gray, cand_rects[0])
+            shift_key = sum(abs(orig_shape.part(k).x - new_shape.part(k).x) + 
+                            abs(orig_shape.part(k).y - new_shape.part(k).y) for k in range(17, 48))
+            total_shift = sum(abs(orig_shape.part(k).x - new_shape.part(k).x) + 
+                              abs(orig_shape.part(k).y - new_shape.part(k).y) for k in range(68))
+            score = float(shift_key * 1.5 + total_shift)
+            return score, False
+        except Exception:
+            return 99999.0, True
+
+    def perturb(self, img_orig_tensor, epsilon=16.0, num_iter=200):
         img_adv = img_orig_tensor.clone().detach().to(self.device)
         img_orig_tensor = img_orig_tensor.to(self.device)
         
@@ -89,14 +113,17 @@ class GradientFreeSpatialAttentionAttack(BaseAttack):
         det = rects[0]
         orig_shape = self.predictor(gray, det)
         
+        # Generazione maschera spaziale guidata dai landmark
         attention_mask = self._create_attention_mask(img_np.shape, orig_shape, det).to(self.device)
         
         best_candidate = img_adv.clone()
         current_perturbation = torch.zeros_like(img_adv)
+        best_score = 0.0
 
         for i in range(num_iter):
+            # Direzione casuale vincolata dalla maschera spaziale
             u = torch.sign(torch.randn_like(img_adv)) * attention_mask
-            step_size = epsilon * 0.35
+            step_size = epsilon * 0.4
             
             pert_plus = torch.clamp(current_perturbation + step_size * u, min=-epsilon, max=epsilon)
             pert_minus = torch.clamp(current_perturbation - step_size * u, min=-epsilon, max=epsilon)
@@ -104,32 +131,25 @@ class GradientFreeSpatialAttentionAttack(BaseAttack):
             cand_plus = torch.clamp(img_orig_tensor + pert_plus, min=0.0, max=255.0)
             cand_minus = torch.clamp(img_orig_tensor + pert_minus, min=0.0, max=255.0)
 
-            cand_plus_np = cand_plus.detach().cpu().permute(1, 2, 0).numpy().astype(np.uint8)
-            rects_plus = self.dlib_detector(cv2.cvtColor(cand_plus_np, cv2.COLOR_RGB2GRAY), 1)
-            evaded_plus = len(rects_plus) == 0
+            score_plus, evaded_plus = self._compute_score(cand_plus, orig_shape)
+            score_minus, evaded_minus = self._compute_score(cand_minus, orig_shape)
 
-            cand_minus_np = cand_minus.detach().cpu().permute(1, 2, 0).numpy().astype(np.uint8)
-            rects_minus = self.dlib_detector(cv2.cvtColor(cand_minus_np, cv2.COLOR_RGB2GRAY), 1)
-            evaded_minus = len(rects_minus) == 0
-
-            if evaded_plus:
+            if score_plus > score_minus:
                 current_perturbation = pert_plus
                 best_candidate = cand_plus
-                success = True
-                success_iteration = i + 1
-                break
-            elif evaded_minus:
+                best_score = score_plus
+            else:
                 current_perturbation = pert_minus
                 best_candidate = cand_minus
+                best_score = score_minus
+
+            if evaded_plus or evaded_minus:
                 success = True
                 success_iteration = i + 1
                 break
-            else:
-                current_perturbation = pert_plus
-                best_candidate = cand_plus
 
         return best_candidate, success, success_iteration
 
-    def attack(self, image_tensor: torch.Tensor, epsilon=12.0, **kwargs) -> torch.Tensor:
+    def attack(self, image_tensor: torch.Tensor, epsilon=16.0, **kwargs) -> torch.Tensor:
         img_adv, _, _ = self.perturb(image_tensor, epsilon=epsilon, **kwargs)
         return img_adv
