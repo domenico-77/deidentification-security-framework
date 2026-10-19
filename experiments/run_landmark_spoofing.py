@@ -34,7 +34,7 @@ import torch
 import warnings
 
 from targets.ciagan import CIAGANTarget
-from attacks.landmark_spoofing import LandmarkSpoofingAttack
+from attacks.blackbox.landmark_spoofing_attack import LandmarkSpoofingAttack
 from benchmark.benchmark_runner import BenchmarkRunner
 from data_loaders.lfw import LFWDataset
 
