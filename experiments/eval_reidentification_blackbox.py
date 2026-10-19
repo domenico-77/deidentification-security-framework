@@ -57,7 +57,7 @@ class BlackBoxEvaluator(BaseEvaluator):
                 device=self.device
             )
         elif attack_name == "gfsa":
-            return SpatialAttentionEvasionAttack(
+            return GradientFreeSpatialAttentionAttack(
                 target=target,
                 detector_wrapper=detector_wrapper,
                 device=self.device
