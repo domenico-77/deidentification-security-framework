@@ -1,4 +1,3 @@
-%%writefile benchmark/benchmark_runner.py
 import os
 import time
 import torch
