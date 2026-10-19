@@ -14,8 +14,8 @@ from attacks.blackbox.simba_attack import SimBA
 from attacks.blackbox.boundary_attack import BoundaryAttack
 from attacks.blackbox.adversarialpatch_attack import AdversarialPatchAttack
 from attacks.blackbox.spsa_attack import SPSAAttack
-from attacks.blackbox.landmark_spoofing import LandmarkSpoofingAttack
-from attacks.blackbox.spatial_attention_evasion import SpatialAttentionEvasionAttack
+from attacks.blackbox.landmark_spoofing_attack import LandmarkSpoofingAttack
+from attacks.blackbox.gradient_free_spatial_attention_attack import GradientFreeSpatialAttentionAttack
 
 from data_loaders.lfw import LFWDataset
 
