@@ -64,7 +64,7 @@ class BlackBoxEvaluator(BaseEvaluator):
         parser.add_argument("--model", type=str, default="deeprivacy2", choices=["deeprivacy2"], help="Modello di anonimizzazione target")
         parser.add_argument("--epsilon", type=float, default=16.0, help="Valore di epsilon per la perturbazione")
         parser.add_argument("--num_samples", type=int, default=20, help="Numero di campioni del dataset da valutare")
-        parser.add_argument("--attack", type=str, default="square", choices=["square", "simba", "boundary", "advpatch", "spsa", "landmark_spoofing"], help="Tipo di attacco black-box da testare")
+        
         args = parser.parse_args()
 
         print(f"\n[INFO] Avvio Identity Leakage Analysis & Re-identification (BLACK-BOX MODE)")
