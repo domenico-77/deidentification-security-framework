@@ -14,7 +14,8 @@ from attacks.blackbox.simba_attack import SimBA
 from attacks.blackbox.boundary_attack import BoundaryAttack
 from attacks.blackbox.adversarialpatch_attack import AdversarialPatchAttack
 from attacks.blackbox.spsa_attack import SPSAAttack
-from attacks.landmark_spoofing import LandmarkSpoofingAttack
+from attacks.blackbox.landmark_spoofing import LandmarkSpoofingAttack
+from attacks.blackbox.spatial_attention_evasion import SpatialAttentionEvasionAttack
 
 from data_loaders.lfw import LFWDataset
 
@@ -55,12 +56,18 @@ class BlackBoxEvaluator(BaseEvaluator):
                 detector_wrapper=detector_wrapper,
                 device=self.device
             )
+        elif attack_name == "gfsa":
+            return SpatialAttentionEvasionAttack(
+                target=target,
+                detector_wrapper=detector_wrapper,
+                device=self.device
+            )
         else:
             raise ValueError(f"Attacco black-box non supportato o non valido: {attack_name}")
             
     def run_blackbox(self):
         parser = argparse.ArgumentParser(description="Valutazione Identity Leakage & Re-identification (Black-Box Mode)")
-        parser.add_argument("--attack", type=str, default="square", choices=["square", "simba", "boundary", "advpatch", "spsa", "landmark_spoofing"], help="Tipo di attacco black-box da testare")
+        parser.add_argument("--attack", type=str, default="square", choices=["square", "simba", "boundary", "advpatch", "spsa", "landmark_spoofing", "gfsa"], help="Tipo di attacco black-box da testare")
         parser.add_argument("--model", type=str, default="deeprivacy2", choices=["deeprivacy2"], help="Modello di anonimizzazione target")
         parser.add_argument("--epsilon", type=float, default=16.0, help="Valore di epsilon per la perturbazione")
         parser.add_argument("--num_samples", type=int, default=20, help="Numero di campioni del dataset da valutare")
