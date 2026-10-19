@@ -1,3 +1,4 @@
+%%writefile benchmark/benchmark_runner.py
 import os
 import time
 import torch
@@ -16,11 +17,9 @@ class BenchmarkRunner:
         self.dataset = dataset
         self.device = device
         
-        # Recupero sicuro del detector wrapper
         anonymizer = target.anonymizer if hasattr(target, "anonymizer") else target.pipeline
         self.detector_wrapper = getattr(anonymizer, "detector", getattr(target, "detector_wrapper", None))
         
-        # Inizializzazione condizionale per DSFD (presente in DeepPrivacy2, opzionale per CIAGAN/Dlib)
         if self.detector_wrapper is not None and hasattr(self.detector_wrapper, "face_detector"):
             self.dsfd_net = self.detector_wrapper.face_detector.net.to(device).eval()
             self.mean_tensor = self.detector_wrapper.face_mean.to(device).float().flatten().view(1, 3, 1, 1)
@@ -66,13 +65,14 @@ class BenchmarkRunner:
                 if clean_faces == 0:
                     continue
 
-                img_adv, success, succ_iter = self.attack.perturb(
+                img_adv, attack_success, succ_iter = self.attack.perturb(
                     img_orig_tensor=img_orig_tensor, 
                     epsilon=eps
                 )
 
                 adv_faces = self.count_faces(img_adv)
-                evaded = (adv_faces == 0)
+                # Integrazione del successo restituito dall'attacco (supporta sia detector evasion che landmark/pipeline spoofing)
+                evaded = bool(attack_success) or (adv_faces == 0)
 
                 metrics = calculate_perturbation_metrics(img_orig_tensor, img_adv)
                 elapsed_seconds = time.time() - start_time
@@ -98,7 +98,7 @@ class BenchmarkRunner:
                     "l2": metrics["l2"],
                     "linf": metrics["linf"],
                     "psnr": metrics["psnr"],
-                    "iterations": succ_iter if succ_iter is not None else 150
+                    "iterations": succ_iter if succ_iter is not None else 30
                 })
 
         df = pd.DataFrame(results)
