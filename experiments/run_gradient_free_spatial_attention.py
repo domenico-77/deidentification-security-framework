@@ -82,6 +82,7 @@ def main():
     runner.run_benchmark(
         epsilons=[8.0, 16.0, 24.0, 32.0],
         num_samples=100,
+        num_iter=200,
         output_dir=args.output_dir
     )
 
