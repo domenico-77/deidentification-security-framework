@@ -1,23 +1,64 @@
 import torch
 import numpy as np
 import cv2
+import dlib
+import urllib.request
+import bz2
+from pathlib import Path
 from attacks.base_attack import BaseAttack
 
 class LandmarkSpoofingAttack(BaseAttack):
     def __init__(self, target=None, detector_wrapper=None, device: torch.device = None):
-        det = detector_wrapper if detector_wrapper is not None else (target.detector_wrapper if target else None)
+        det = detector_wrapper if detector_wrapper is not None else (getattr(target, 'detector_wrapper', None) if target else None)
         super().__init__(detector=det, device=device)
         self.target = target
-        self.dlib_detector = target.dlib_detector if target else None
-        self.predictor = target.predictor if target else None
+        
+        self.dlib_detector = dlib.get_frontal_face_detector()
+        self.predictor = self._load_shape_predictor()
+
+    def _load_shape_predictor(self):
+        predictor_filename = "shape_predictor_68_face_landmarks.dat"
+        current_dir = Path(__file__).resolve().parent
+        search_roots = [
+            current_dir,
+            current_dir.parent,
+            Path.cwd(),
+            Path("/kaggle/input"),
+            Path("/kaggle/working"),
+        ]
+
+        for root in search_roots:
+            if root.exists():
+                found_files = list(root.glob(f"**/{predictor_filename}"))
+                if found_files:
+                    predictor_path = found_files[0]
+                    try:
+                        return dlib.shape_predictor(str(predictor_path))
+                    except Exception:
+                        pass
+
+        fallback_path = Path(predictor_filename)
+        bz2_path = fallback_path.with_suffix(".dat.bz2")
+        url = "http://dlib.net/files/shape_predictor_68_face_landmarks.dat.bz2"
+        try:
+            urllib.request.urlretrieve(url, bz2_path)
+            with bz2.BZ2File(bz2_path) as fr, open(fallback_path, "wb") as fw:
+                fw.write(fr.read())
+            bz2_path.unlink(missing_ok=True)
+            return dlib.shape_predictor(str(fallback_path))
+        except Exception:
+            return None
 
     def _compute_score(self, candidate, orig_shape, y1, y2, x1, x2):
+        if self.predictor is None or self.dlib_detector is None:
+            return 0.0, None, None, False
+
         cand_np = candidate.detach().cpu().permute(1, 2, 0).numpy().astype(np.uint8)
         cand_gray = cv2.cvtColor(cand_np, cv2.COLOR_RGB2GRAY)
         cand_rects = self.dlib_detector(cand_gray, 1)
 
         if not cand_rects:
-            return 99999.0, cand_gray, None, True  # Evasione totale
+            return 99999.0, cand_gray, None, True  # Evasione totale: nessun volto rilevato
 
         try:
             new_shape = self.predictor(cand_gray, cand_rects[0])
@@ -41,7 +82,7 @@ class LandmarkSpoofingAttack(BaseAttack):
         gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
         rects = self.dlib_detector(gray, 1)
 
-        if not rects:
+        if not rects or self.predictor is None:
             return img_adv, True, 1
 
         det = rects[0]
@@ -51,10 +92,8 @@ class LandmarkSpoofingAttack(BaseAttack):
         
         best_candidate = img_adv.clone()
         current_perturbation = torch.zeros_like(img_adv)
-        best_score = 0.0
 
         for i in range(num_iter):
-            # Direzione basata su segno per sfruttare efficacemente la epsilon-ball
             u = torch.sign(torch.randn_like(img_adv))
             mask = torch.zeros_like(img_adv)
             mask[:, y1:y2, x1:x2] = 1.0
@@ -62,7 +101,6 @@ class LandmarkSpoofingAttack(BaseAttack):
             
             step_size = epsilon * 0.4
             
-            # Test delle direzioni speculari plus/minus
             pert_plus = torch.clamp(current_perturbation + step_size * u, min=-epsilon, max=epsilon)
             pert_minus = torch.clamp(current_perturbation - step_size * u, min=-epsilon, max=epsilon)
             
@@ -75,13 +113,12 @@ class LandmarkSpoofingAttack(BaseAttack):
             if score_plus > score_minus:
                 current_perturbation = pert_plus
                 best_candidate = cand_plus
-                best_score = score_plus
             else:
                 current_perturbation = pert_minus
                 best_candidate = cand_minus
-                best_score = score_minus
 
-            if evaded_plus or evaded_minus or best_score > 130.0:
+            # L'esito diventa TRUE SOLTANTO se il rilevatore non individua alcun volto
+            if evaded_plus or evaded_minus:
                 success = True
                 success_iteration = i + 1
                 break
