@@ -80,7 +80,7 @@ def main():
     # 6. Esecuzione del benchmark
     os.makedirs(args.output_dir, exist_ok=True)
     runner.run_benchmark(
-        epsilons=[4.0, 8.0, 16.0, 32.0],
+        epsilons=[32.0, 64.0, 128.0, 255.0],
         num_samples=100,
         output_dir=args.output_dir
     )
