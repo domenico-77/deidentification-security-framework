@@ -1,31 +1,45 @@
-import torch
-import numpy as np
+import bz2
+import urllib.request
+from pathlib import Path
+
 import cv2
 import dlib
-import urllib.request
-import bz2
-from pathlib import Path
+import numpy as np
+import torch
+
 from attacks.base_attack import BaseAttack
+
 
 class GradientFreeSpatialAttentionAttack(BaseAttack):
     """
-    Gradient-Free Spatial Attention Attack (Black-Box Mode).
-    Conduce un'ottimizzazione guidata dallo spostamento dei landmark ma confinata 
-    esclusivamente alle regioni di transizione critiche per HOG (occhi, sopracciglia, naso)
-    tramite una maschera d'attenzione gaussiana.
+    Attacco black-box gradient-free con maschera spaziale.
+    Sfrutta lo score continuo della SVM del detector HOG di dlib per guidare
+    l'ottimizzazione confinata nelle regioni critiche tramite maschera gaussiana.
     """
-    def __init__(self, target=None, detector_wrapper=None, device: torch.device = None):
-        det = detector_wrapper if detector_wrapper is not None else (getattr(target, 'detector_wrapper', None) if target else None)
+
+    def __init__(
+        self,
+        target=None,
+        detector_wrapper=None,
+        device: torch.device = None,
+        num_iter: int = 200,
+    ):
+        det = detector_wrapper
+        if det is None and target is not None:
+            det = getattr(target, "detector_wrapper", None)
+
         super().__init__(detector=det, device=device)
+
         self.target = target
-        
+        self.default_num_iter = num_iter
         self.dlib_detector = dlib.get_frontal_face_detector()
         self.predictor = self._load_shape_predictor()
 
     def _load_shape_predictor(self):
-        predictor_filename = "shape_predictor_68_face_landmarks.dat"
+        filename = "shape_predictor_68_face_landmarks.dat"
         current_dir = Path(__file__).resolve().parent
-        search_roots = [
+
+        roots = [
             current_dir,
             current_dir.parent,
             current_dir.parent.parent,
@@ -34,121 +48,298 @@ class GradientFreeSpatialAttentionAttack(BaseAttack):
             Path("/kaggle/working"),
         ]
 
-        for root in search_roots:
-            if root.exists():
-                found_files = list(root.glob(f"**/{predictor_filename}"))
-                if found_files:
-                    try:
-                        return dlib.shape_predictor(str(found_files[0]))
-                    except Exception:
-                        pass
+        for root in roots:
+            if not root.exists():
+                continue
 
-        fallback_path = Path(predictor_filename)
-        bz2_path = fallback_path.with_suffix(".dat.bz2")
-        url = "http://dlib.net/files/shape_predictor_68_face_landmarks.dat.bz2"
+            try:
+                for path in root.glob(f"**/{filename}"):
+                    try:
+                        return dlib.shape_predictor(str(path))
+                    except (RuntimeError, OSError):
+                        continue
+            except (OSError, PermissionError):
+                continue
+
+        output_path = Path.cwd() / filename
+        compressed_path = Path.cwd() / f"{filename}.bz2"
+        url = "https://dlib.net/files/shape_predictor_68_face_landmarks.dat.bz2"
+
         try:
-            urllib.request.urlretrieve(url, bz2_path)
-            with bz2.BZ2File(bz2_path) as fr, open(fallback_path, "wb") as fw:
-                fw.write(fr.read())
-            bz2_path.unlink(missing_ok=True)
-            return dlib.shape_predictor(str(fallback_path))
-        except Exception:
+            urllib.request.urlretrieve(url, str(compressed_path))
+
+            with bz2.BZ2File(compressed_path, "rb") as source:
+                with open(output_path, "wb") as destination:
+                    while True:
+                        chunk = source.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        destination.write(chunk)
+
+            compressed_path.unlink(missing_ok=True)
+            return dlib.shape_predictor(str(output_path))
+
+        except Exception as exc:
+            print(
+                "[WARN] Predictor dlib non disponibile: "
+                f"{type(exc).__name__}: {exc}"
+            )
             return None
 
-    def _create_attention_mask(self, img_shape, shape, det):
-        mask = np.zeros((img_shape[0], img_shape[1]), dtype=np.float32)
-        
-        if shape is None:
-            mask[max(0, det.top()):min(img_shape[0], det.bottom()), 
-                 max(0, det.left()):min(img_shape[1], det.right())] = 1.0
-            return torch.from_numpy(mask).unsqueeze(0).repeat(3, 1, 1)
+    @staticmethod
+    def _validate_image(image):
+        if not isinstance(image, torch.Tensor):
+            raise TypeError("L'immagine deve essere un torch.Tensor.")
 
-        # Regioni chiave HOG: sopracciglia (17-26) e occhi/naso (27-47)
-        key_indices = list(range(17, 48))
-        points = np.array([(shape.part(i).x, shape.part(i).y) for i in key_indices], dtype=np.int32)
-        
-        hull = cv2.convexHull(points)
-        cv2.fillConvexPoly(mask, hull, 1.0)
+        if image.ndim != 3 or image.shape[0] != 3:
+            raise ValueError(
+                "Formato atteso [3, H, W]; ricevuto "
+                f"{tuple(image.shape)}."
+            )
+
+        if image.shape[1] < 2 or image.shape[2] < 2:
+            raise ValueError("Dimensioni dell'immagine non valide.")
+
+        if not torch.isfinite(image).all():
+            raise ValueError("L'immagine contiene NaN o valori infiniti.")
+
+        low = image.min().item()
+        high = image.max().item()
+
+        if low < 0 or high > 255:
+            raise ValueError(
+                f"Range pixel non supportato: [{low:.4f}, {high:.4f}]."
+            )
+
+        normalized = high <= 1.0
+        return normalized
+
+    @staticmethod
+    def _to_pixel_tensor(image, normalized):
+        image = image.float()
+        if normalized:
+            image = image * 255.0
+        return image.clamp(0.0, 255.0)
+
+    @staticmethod
+    def _to_original_scale(image_pixels, normalized):
+        image = image_pixels.clamp(0.0, 255.0)
+        if normalized:
+            image = image / 255.0
+        return image
+
+    @staticmethod
+    def _to_rgb_uint8(image_pixels):
+        array = (
+            image_pixels.detach()
+            .float()
+            .clamp(0.0, 255.0)
+            .permute(1, 2, 0)
+            .cpu()
+            .numpy()
+        )
+        return np.rint(array).astype(np.uint8)
+
+    @staticmethod
+    def _to_gray(image_rgb):
+        return cv2.cvtColor(image_rgb, cv2.COLOR_RGB2GRAY)
+
+    def _create_attention_mask(self, img_shape, shape, det):
+        height, width = img_shape[:2]
+        mask = np.zeros((height, width), dtype=np.float32)
+
+        if shape is None:
+            top = max(0, det.top())
+            bottom = min(height, det.bottom() + 1)
+            left = max(0, det.left())
+            right = min(width, det.right() + 1)
+
+            if bottom > top and right > left:
+                mask[top:bottom, left:right] = 1.0
+        else:
+            indices = list(range(17, 48))
+            points = np.array(
+                [
+                    (shape.part(i).x, shape.part(i).y)
+                    for i in indices
+                ],
+                dtype=np.int32,
+            )
+
+            if len(points) >= 3:
+                hull = cv2.convexHull(points)
+                cv2.fillConvexPoly(mask, hull, 1.0)
+
         mask = cv2.GaussianBlur(mask, (21, 21), 0)
-        
+        mask = np.clip(mask, 0.0, 1.0)
+
         return torch.from_numpy(mask).unsqueeze(0).repeat(3, 1, 1)
 
     def _compute_score(self, candidate, orig_shape):
-        if self.predictor is None or self.dlib_detector is None:
-            return 0.0, True
-
-        cand_np = candidate.detach().cpu().permute(1, 2, 0).numpy().astype(np.uint8)
-        cand_gray = cv2.cvtColor(cand_np, cv2.COLOR_RGB2GRAY)
-        cand_rects = self.dlib_detector(cand_gray, 1)
-
-        if not cand_rects:
-            return 99999.0, True  # Evasione totale: nessun volto rilevato
+        """
+        Usa .run() di dlib per estrarre rects e scores continui della SVM.
+        Restituisce (score, detector_evasion).
+        """
+        if self.dlib_detector is None:
+            return float("inf"), False
 
         try:
-            new_shape = self.predictor(cand_gray, cand_rects[0])
-            shift_key = sum(abs(orig_shape.part(k).x - new_shape.part(k).x) + 
-                            abs(orig_shape.part(k).y - new_shape.part(k).y) for k in range(17, 48))
-            total_shift = sum(abs(orig_shape.part(k).x - new_shape.part(k).x) + 
-                              abs(orig_shape.part(k).y - new_shape.part(k).y) for k in range(68))
-            score = float(shift_key * 1.5 + total_shift)
+            candidate_rgb = self._to_rgb_uint8(candidate)
+            candidate_gray = self._to_gray(candidate_rgb)
+            dets, scores, _ = self.dlib_detector.run(candidate_gray, 1, 0.0)
+        except Exception:
+            return float("inf"), False
+
+        if len(dets) == 0:
+            return float("inf"), True  # Evasione totale
+
+        try:
+            min_score = float(min(scores)) if len(scores) > 0 else 0.0
+            score = float(min_score)
+
+            if not np.isfinite(score):
+                return float("inf"), False
+
             return score, False
         except Exception:
-            return 99999.0, True
+            return float("inf"), False
 
-    def perturb(self, img_orig_tensor, epsilon=16.0, num_iter=200):
-        img_adv = img_orig_tensor.clone().detach().to(self.device)
-        img_orig_tensor = img_orig_tensor.to(self.device)
-        
-        success = False
-        success_iteration = num_iter
+    def perturb(self, img_orig_tensor, epsilon=16.0, num_iter=None):
+        if num_iter is None:
+            num_iter = self.default_num_iter
 
-        img_np = img_orig_tensor.detach().cpu().permute(1, 2, 0).numpy().astype(np.uint8)
-        gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
-        rects = self.dlib_detector(gray, 1)
+        if not isinstance(num_iter, int) or num_iter < 1:
+            raise ValueError("num_iter deve essere un intero positivo.")
 
-        if not rects or self.predictor is None:
-            return img_adv, True, 1
+        if not np.isfinite(epsilon) or epsilon < 0:
+            raise ValueError("epsilon deve essere un valore finito >= 0.")
 
-        det = rects[0]
-        orig_shape = self.predictor(gray, det)
-        
-        # Generazione maschera spaziale guidata dai landmark
-        attention_mask = self._create_attention_mask(img_np.shape, orig_shape, det).to(self.device)
-        
-        best_candidate = img_adv.clone()
-        current_perturbation = torch.zeros_like(img_adv)
-        best_score = 0.0
+        input_normalized = self._validate_image(img_orig_tensor)
 
-        for i in range(num_iter):
-            # Direzione casuale vincolata dalla maschera spaziale
-            u = torch.sign(torch.randn_like(img_adv)) * attention_mask
-            step_size = epsilon * 0.4
-            
-            pert_plus = torch.clamp(current_perturbation + step_size * u, min=-epsilon, max=epsilon)
-            pert_minus = torch.clamp(current_perturbation - step_size * u, min=-epsilon, max=epsilon)
-            
-            cand_plus = torch.clamp(img_orig_tensor + pert_plus, min=0.0, max=255.0)
-            cand_minus = torch.clamp(img_orig_tensor + pert_minus, min=0.0, max=255.0)
+        original_scale = img_orig_tensor.detach().to(self.device).float()
+        original_pixels = self._to_pixel_tensor(
+            original_scale, input_normalized
+        )
 
-            score_plus, evaded_plus = self._compute_score(cand_plus, orig_shape)
-            score_minus, evaded_minus = self._compute_score(cand_minus, orig_shape)
+        if self.predictor is None or self.dlib_detector is None:
+            return original_scale.clone(), False, 0
 
-            if score_plus > score_minus:
-                current_perturbation = pert_plus
-                best_candidate = cand_plus
-                best_score = score_plus
+        original_rgb = self._to_rgb_uint8(original_pixels)
+        original_gray = self._to_gray(original_rgb)
+
+        try:
+            rects = self.dlib_detector(original_gray, 1)
+        except Exception:
+            return original_scale.clone(), False, 0
+
+        if len(rects) == 0:
+            return original_scale.clone(), False, 0
+
+        try:
+            original_shape = self.predictor(original_gray, rects[0])
+        except Exception:
+            return original_scale.clone(), False, 0
+
+        attention_mask = self._create_attention_mask(
+            original_rgb.shape,
+            original_shape,
+            rects[0],
+        ).to(device=self.device, dtype=torch.float32)
+
+        if not torch.isfinite(attention_mask).all():
+            return original_scale.clone(), False, 0
+
+        current_perturbation = torch.zeros_like(original_pixels)
+        best_candidate = original_pixels.clone()
+        best_score = float("inf")
+        success_iteration = 0
+
+        step_size = float(epsilon) * 0.3
+
+        for iteration in range(num_iter):
+            direction = (
+                torch.sign(torch.randn_like(original_pixels))
+                * attention_mask
+            )
+
+            perturbation_plus = torch.clamp(
+                current_perturbation + step_size * direction,
+                min=-epsilon,
+                max=epsilon,
+            )
+
+            perturbation_minus = torch.clamp(
+                current_perturbation - step_size * direction,
+                min=-epsilon,
+                max=epsilon,
+            )
+
+            candidate_plus = torch.clamp(
+                original_pixels + perturbation_plus,
+                min=0.0,
+                max=255.0,
+            )
+
+            candidate_minus = torch.clamp(
+                original_pixels + perturbation_minus,
+                min=0.0,
+                max=255.0,
+            )
+
+            score_plus, evaded_plus = self._compute_score(
+                candidate_plus, original_shape
+            )
+            score_minus, evaded_minus = self._compute_score(
+                candidate_minus, original_shape
+            )
+
+            if evaded_plus:
+                best_candidate = candidate_plus
+                success_iteration = iteration + 1
+                result = self._to_original_scale(
+                    best_candidate, input_normalized
+                )
+                return result.detach(), True, success_iteration
+
+            if evaded_minus:
+                best_candidate = candidate_minus
+                success_iteration = iteration + 1
+                result = self._to_original_scale(
+                    best_candidate, input_normalized
+                )
+                return result.detach(), True, success_iteration
+
+            # Minimizziamo lo score della SVM
+            if score_plus <= score_minus:
+                chosen_perturbation = perturbation_plus
+                chosen_candidate = candidate_plus
+                chosen_score = score_plus
             else:
-                current_perturbation = pert_minus
-                best_candidate = cand_minus
-                best_score = score_minus
+                chosen_perturbation = perturbation_minus
+                chosen_candidate = candidate_minus
+                chosen_score = score_minus
 
-            if evaded_plus or evaded_minus:
-                success = True
-                success_iteration = i + 1
-                break
+            current_perturbation = chosen_perturbation
 
-        return best_candidate, success, success_iteration
+            if chosen_score < best_score:
+                best_score = chosen_score
+                best_candidate = chosen_candidate.clone()
 
-    def attack(self, image_tensor: torch.Tensor, epsilon=16.0, **kwargs) -> torch.Tensor:
-        img_adv, _, _ = self.perturb(image_tensor, epsilon=epsilon, **kwargs)
-        return img_adv
+        result = self._to_original_scale(
+            best_candidate, input_normalized
+        )
+
+        return result.detach(), False, num_iter
+
+    def attack(
+        self,
+        image_tensor: torch.Tensor,
+        epsilon=16.0,
+        **kwargs,
+    ) -> torch.Tensor:
+        image_adv, _, _ = self.perturb(
+            image_tensor,
+            epsilon=epsilon,
+            **kwargs,
+        )
+        return image_adv
