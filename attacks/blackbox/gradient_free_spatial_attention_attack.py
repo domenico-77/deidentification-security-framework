@@ -1,6 +1,7 @@
 import bz2
 import urllib.request
 from pathlib import Path
+import yaml
 
 import cv2
 import dlib
@@ -12,9 +13,8 @@ from attacks.base_attack import BaseAttack
 
 class GradientFreeSpatialAttentionAttack(BaseAttack):
     """
-    Attacco black-box gradient-free con maschera spaziale.
-    Sfrutta lo score continuo della SVM del detector HOG di dlib per guidare
-    l'ottimizzazione confinata nelle regioni critiche tramite maschera gaussiana.
+    Attacco black-box gradient-free con maschera spaziale e spinta direzionale
+    basata sul gradiente dello score continuo della SVM del detector HOG.
     """
 
     def __init__(
@@ -22,7 +22,7 @@ class GradientFreeSpatialAttentionAttack(BaseAttack):
         target=None,
         detector_wrapper=None,
         device: torch.device = None,
-        num_iter: int = 200,
+        num_iter: int = 500,
     ):
         det = detector_wrapper
         if det is None and target is not None:
@@ -37,35 +37,44 @@ class GradientFreeSpatialAttentionAttack(BaseAttack):
 
     def _load_shape_predictor(self):
         filename = "shape_predictor_68_face_landmarks.dat"
-        current_dir = Path(__file__).resolve().parent
+        
+        config_path = Path("configs/ciagan_paths.yaml")
+        yaml_config = {}
+        if config_path.exists():
+            with open(config_path, "r") as f:
+                yaml_config = yaml.safe_load(f).get("target", {})
 
-        roots = [
-            current_dir,
-            current_dir.parent,
-            current_dir.parent.parent,
-            Path.cwd(),
-            Path("/kaggle/input"),
-            Path("/kaggle/working"),
-        ]
+        candidates = []
+        if "repo_root" in yaml_config:
+            candidates.append(Path(yaml_config["repo_root"]) / "source" / filename)
 
-        for root in roots:
-            if not root.exists():
-                continue
+        candidates.extend([
+            Path.cwd() / filename,
+            Path(__file__).resolve().parent / filename,
+            Path(__file__).resolve().parent.parent / filename,
+            Path("/kaggle/input/ciagan-repository/ciagan/source") / filename,
+        ])
 
-            try:
-                for path in root.glob(f"**/{filename}"):
-                    try:
-                        return dlib.shape_predictor(str(path))
-                    except (RuntimeError, OSError):
-                        continue
-            except (OSError, PermissionError):
-                continue
+        kaggle_input = Path("/kaggle/input")
+        if kaggle_input.exists():
+            for base in [kaggle_input] + list(kaggle_input.glob("*/")):
+                if base.is_dir():
+                    candidates.append(base / "ciagan-repository" / "ciagan" / "source" / filename)
+                    candidates.append(base / "ciagan" / "source" / filename)
+
+        for path in candidates:
+            if path and path.exists():
+                try:
+                    return dlib.shape_predictor(str(path))
+                except (RuntimeError, OSError):
+                    continue
 
         output_path = Path.cwd() / filename
         compressed_path = Path.cwd() / f"{filename}.bz2"
         url = "https://dlib.net/files/shape_predictor_68_face_landmarks.dat.bz2"
 
         try:
+            print(f"[INFO] Download automatico di {filename} in corso...")
             urllib.request.urlretrieve(url, str(compressed_path))
 
             with bz2.BZ2File(compressed_path, "rb") as source:
@@ -252,15 +261,17 @@ class GradientFreeSpatialAttentionAttack(BaseAttack):
         current_perturbation = torch.zeros_like(original_pixels)
         best_candidate = original_pixels.clone()
         best_score = float("inf")
-        success_iteration = 0
+        
+        successful_candidates = []
+        step_size = float(epsilon) * 0.15
 
-        step_size = float(epsilon) * 0.3
+        # Vettore di momento / spinta direzionale basato sullo score
+        directional_momentum = torch.zeros_like(original_pixels)
 
         for iteration in range(num_iter):
-            direction = (
-                torch.sign(torch.randn_like(original_pixels))
-                * attention_mask
-            )
+            # Combina la componente stocastica con la spinta direzionale accumulata
+            random_dir = torch.sign(torch.randn_like(original_pixels)) * attention_mask
+            direction = torch.sign(random_dir + 0.5 * directional_momentum) * attention_mask
 
             perturbation_plus = torch.clamp(
                 current_perturbation + step_size * direction,
@@ -294,36 +305,38 @@ class GradientFreeSpatialAttentionAttack(BaseAttack):
             )
 
             if evaded_plus:
-                best_candidate = candidate_plus
-                success_iteration = iteration + 1
-                result = self._to_original_scale(
-                    best_candidate, input_normalized
-                )
-                return result.detach(), True, success_iteration
+                l2_dist = torch.norm(candidate_plus - original_pixels).item()
+                successful_candidates.append((l2_dist, candidate_plus, iteration + 1))
 
             if evaded_minus:
-                best_candidate = candidate_minus
-                success_iteration = iteration + 1
-                result = self._to_original_scale(
-                    best_candidate, input_normalized
-                )
-                return result.detach(), True, success_iteration
+                l2_dist = torch.norm(candidate_minus - original_pixels).item()
+                successful_candidates.append((l2_dist, candidate_minus, iteration + 1))
 
-            # Minimizziamo lo score della SVM
-            if score_plus <= score_minus:
+            # Aggiornamento della spinta direzionale in base a quale verso riduce lo score della SVM
+            if score_plus < score_minus:
                 chosen_perturbation = perturbation_plus
                 chosen_candidate = candidate_plus
                 chosen_score = score_plus
+                # Se il verso plus ha migliorato lo score, rinforziamo la direzione
+                directional_momentum = 0.7 * directional_momentum + 0.3 * direction
             else:
                 chosen_perturbation = perturbation_minus
                 chosen_candidate = candidate_minus
                 chosen_score = score_minus
+                # Se il verso minus è stato migliore, spingiamo nella direzione opposta
+                directional_momentum = 0.7 * directional_momentum - 0.3 * direction
 
             current_perturbation = chosen_perturbation
 
             if chosen_score < best_score:
                 best_score = chosen_score
                 best_candidate = chosen_candidate.clone()
+
+        if successful_candidates:
+            successful_candidates.sort(key=lambda x: x[0])
+            _, best_success_cand, success_iter = successful_candidates[0]
+            result = self._to_original_scale(best_success_cand, input_normalized)
+            return result.detach(), True, success_iter
 
         result = self._to_original_scale(
             best_candidate, input_normalized
