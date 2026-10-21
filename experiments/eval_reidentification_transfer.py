@@ -14,7 +14,7 @@ from attacks.transfer.bim_transfer import TransferBIMAttack
 from attacks.transfer.pgd_transfer import TransferPGDAttack
 from attacks.transfer.deepfool_transfer import TransferDeepFoolAttack
 from attacks.transfer.uap_transfer import TransferUAPAttack
-
+from attacks.whitebox.ciagan_hog_surrogate_attack import CiaganHogSurrogateAttack
 from data_loaders.lfw import LFWDataset
 
 class TransferEvaluator(BaseEvaluator):
@@ -74,13 +74,20 @@ class TransferEvaluator(BaseEvaluator):
                 surrogate_net=surrogate_net,
                 device=self.device
             )
+        elif attack_name == "ciagan_hog":
+            return CiaganHogSurrogateAttack(
+                detector_wrapper=detector_wrapper,
+                mean_tensor=mean_tensor,
+                target=target,
+                device=self.device
+            )
         else:
             raise ValueError(f"Attacco transfer non supportato o non valido: {attack_name}")
 
     def run_transfer(self):
         parser = argparse.ArgumentParser(description="Valutazione Identity Leakage & Re-identification (Transfer Mode)")
         parser.add_argument("--attack", type=str, default="pgd", choices=["fgsm", "bim", "pgd", "uap", "deepfool"], help="Tipo di attacco transfer da testare")
-        parser.add_argument("--model", type=str, default="deeprivacy2", choices=["deeprivacy2"], help="Modello di anonimizzazione target")
+        parser.add_argument("--model", type=str, default="deeprivacy2", choices=["deeprivacy2", "ciagan"], help="Modello di anonimizzazione target")
         parser.add_argument("--surrogate", type=str, default="retinaface", choices=["retinaface", "yolo"], help="Modello surrogato per il calcolo dei gradienti")
         parser.add_argument("--surrogate_weights", type=str, default="", help="Percorso ai pesi del modello surrogato (es. .pt o .pth)")
         parser.add_argument("--epsilon", type=float, default=8.0, help="Valore di epsilon per la perturbazione")
