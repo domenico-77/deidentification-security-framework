@@ -74,7 +74,7 @@ class TransferEvaluator(BaseEvaluator):
                 surrogate_net=surrogate_net,
                 device=self.device
             )
-        elif attack_name == "ciagan_hog":
+        elif attack_name == "hog_surrogate":
             return CiaganHogSurrogateAttack(
                 detector_wrapper=detector_wrapper,
                 mean_tensor=mean_tensor,
@@ -86,7 +86,7 @@ class TransferEvaluator(BaseEvaluator):
 
     def run_transfer(self):
         parser = argparse.ArgumentParser(description="Valutazione Identity Leakage & Re-identification (Transfer Mode)")
-        parser.add_argument("--attack", type=str, default="pgd", choices=["fgsm", "bim", "pgd", "uap", "deepfool"], help="Tipo di attacco transfer da testare")
+        parser.add_argument("--attack", type=str, default="pgd", choices=["fgsm", "bim", "pgd", "uap", "deepfool","hog_surrogate"], help="Tipo di attacco transfer da testare")
         parser.add_argument("--model", type=str, default="deeprivacy2", choices=["deeprivacy2", "ciagan"], help="Modello di anonimizzazione target")
         parser.add_argument("--surrogate", type=str, default="retinaface", choices=["retinaface", "yolo"], help="Modello surrogato per il calcolo dei gradienti")
         parser.add_argument("--surrogate_weights", type=str, default="", help="Percorso ai pesi del modello surrogato (es. .pt o .pth)")
