@@ -57,6 +57,7 @@ import numpy as np
 import cv2
 
 from targets.deeprivacy2 import DeepPrivacy2Target
+from targets.ciagan import CIAGANTarget
 from attacks.fgsm import FGSMAttack
 from attacks.bim import BIMAttack
 from attacks.pgd import PGDAttack
