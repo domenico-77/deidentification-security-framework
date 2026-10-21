@@ -189,9 +189,40 @@ class BaseEvaluator:
             dsfd_net = detector_wrapper.face_detector.net.to(self.device).eval()
             mean_tensor = detector_wrapper.face_mean.to(self.device).float().flatten().view(1, 3, 1, 1)
             return target, anonymizer, detector_wrapper, dsfd_net, mean_tensor
+            
+        elif model_name == "ciagan":
+            print("[INFO] Caricamento del target CIAGAN...")
+            models_dir = "/kaggle/input/datasets/domenicovicenti/ciagan-models"
+            target = CIAGANTarget(models_dir=models_dir, device=self.device)
+            detector_wrapper = getattr(target, 'detector_wrapper', None)
+
+            def ciagan_anonymizer(img_tensor_uint8):
+                if img_tensor_uint8.ndim == 3 and img_tensor_uint8.shape[0] == 3:
+                    img_input = img_tensor_uint8.unsqueeze(0).float()
+                else:
+                    img_input = img_tensor_uint8.float()
+                if img_input.max() > 1.0:
+                    img_input = img_input / 255.0
+                with torch.no_grad():
+                    out = target.anonymizer(img_input)
+                if isinstance(out, torch.Tensor):
+                    out = out.squeeze(0)
+                    if out.max() <= 1.0:
+                        out = out * 255.0
+                    return out.byte()
+                return out
+
+            dsfd_net = getattr(detector_wrapper, 'face_detector', None)
+            if dsfd_net is not None and hasattr(dsfd_net, 'net'):
+                dsfd_net = dsfd_net.net.to(self.device).eval()
+            mean_tensor = getattr(detector_wrapper, 'face_mean', None)
+            if mean_tensor is not None:
+                mean_tensor = mean_tensor.to(self.device).float().flatten().view(1, 3, 1, 1)
+
+            return target, ciagan_anonymizer, detector_wrapper, dsfd_net, mean_tensor
         else:
             raise NotImplementedError(f"Modello {model_name} non ancora integrato.")
-
+        
     def run(self):
         parser = argparse.ArgumentParser(description="Valutazione Identity Leakage & Re-identification Confronto")
         parser.add_argument("--attack", type=str, default="bim", choices=["fgsm", "bim", "pgd", "uap", "deepfool"], help="Tipo di attacco da testare")
