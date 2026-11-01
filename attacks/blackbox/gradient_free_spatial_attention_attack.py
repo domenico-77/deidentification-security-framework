@@ -1,21 +1,39 @@
+%%writefile attacks/blackbox/gradient_free_spatial_attention_attack.py
 import bz2
 import urllib.request
 from pathlib import Path
-import yaml
+yaml_mod = None
+try:
+    import yaml
+    yaml_mod = yaml
+except ImportError:
+    pass
 
 import cv2
 import dlib
 import numpy as np
 import torch
+import torch.nn.functional as F
 
 from attacks.base_attack import BaseAttack
 
 
 class GradientFreeSpatialAttentionAttack(BaseAttack):
     """
-    Attacco black-box gradient-free con maschera spaziale e spinta direzionale
-    basata sul gradiente dello score continuo della SVM del detector HOG.
+    Attacco black-box con maschera spaziale periferica.
+
+    v4: ricerca a bassa frequenza. La perturbazione e' parametrizzata su una
+    griglia ridotta (grid_size x grid_size) e poi upsamplingata: lo spazio di
+    ricerca scende da ~10^5-10^6 dimensioni a poche centinaia, cosi' la
+    ricerca random+momentum converge entro il budget di query. Le
+    perturbazioni a bassa frequenza aggrediscono anche i gradienti interni
+    dell'HOG che l'anello di contorno non copre. La similarita' viene
+    ripristinata dalla fase di shrink operante nello stesso spazio.
     """
+
+    GRID_SIZE = 10          # dimensioni della griglia di ricerca
+    BAND_RATIO = 0.20       # banda dell'anello di contorno
+    SIM_BUDGET_QUERIES = 1000
 
     def __init__(
         self,
@@ -23,6 +41,7 @@ class GradientFreeSpatialAttentionAttack(BaseAttack):
         detector_wrapper=None,
         device: torch.device = None,
         num_iter: int = 500,
+        num_restarts: int = 10,
     ):
         det = detector_wrapper
         if det is None and target is not None:
@@ -32,17 +51,18 @@ class GradientFreeSpatialAttentionAttack(BaseAttack):
 
         self.target = target
         self.default_num_iter = num_iter
+        self.num_restarts = num_restarts
         self.dlib_detector = dlib.get_frontal_face_detector()
         self.predictor = self._load_shape_predictor()
 
     def _load_shape_predictor(self):
         filename = "shape_predictor_68_face_landmarks.dat"
-        
+
         config_path = Path("configs/ciagan_paths.yaml")
         yaml_config = {}
-        if config_path.exists():
+        if config_path.exists() and yaml_mod is not None:
             with open(config_path, "r") as f:
-                yaml_config = yaml.safe_load(f).get("target", {})
+                yaml_config = yaml_mod.safe_load(f).get("target", {})
 
         candidates = []
         if "repo_root" in yaml_config:
@@ -166,29 +186,40 @@ class GradientFreeSpatialAttentionAttack(BaseAttack):
             if bottom > top and right > left:
                 mask[top:bottom, left:right] = 1.0
         else:
-            indices = list(range(17, 48))
-            points = np.array(
-                [
-                    (shape.part(i).x, shape.part(i).y)
-                    for i in indices
-                ],
+            outer_indices = list(range(0, 27))
+            outer_points = np.array(
+                [(shape.part(i).x, shape.part(i).y) for i in outer_indices],
                 dtype=np.int32,
             )
-
-            if len(points) >= 3:
-                hull = cv2.convexHull(points)
+            if len(outer_points) >= 3:
+                hull = cv2.convexHull(outer_points)
                 cv2.fillConvexPoly(mask, hull, 1.0)
 
-        mask = cv2.GaussianBlur(mask, (21, 21), 0)
+                face_w = max(1, hull[:, 0, 0].max() - hull[:, 0, 0].min())
+                band = max(3, int(face_w * self.BAND_RATIO))
+                kernel = cv2.getStructuringElement(
+                    cv2.MORPH_ELLIPSE, (band, band)
+                )
+                inner = cv2.erode(mask, kernel, iterations=1)
+                mask = np.clip(mask - inner, 0.0, 1.0)
+
+                inner_mask = np.zeros((height, width), dtype=np.float32)
+                inner_indices = list(range(27, 68))
+                inner_points = np.array(
+                    [(shape.part(i).x, shape.part(i).y) for i in inner_indices],
+                    dtype=np.int32,
+                )
+                if len(inner_points) >= 3:
+                    inner_hull = cv2.convexHull(inner_points)
+                    cv2.fillConvexPoly(inner_mask, inner_hull, 1.0)
+                    mask = np.clip(mask - inner_mask, 0.0, 1.0)
+
+        mask = cv2.GaussianBlur(mask, (7, 7), 1.5)
         mask = np.clip(mask, 0.0, 1.0)
 
         return torch.from_numpy(mask).unsqueeze(0).repeat(3, 1, 1)
 
     def _compute_score(self, candidate, orig_shape):
-        """
-        Usa .run() di dlib per estrarre rects e scores continui della SVM.
-        Restituisce (score, detector_evasion).
-        """
         if self.dlib_detector is None:
             return float("inf"), False
 
@@ -213,7 +244,64 @@ class GradientFreeSpatialAttentionAttack(BaseAttack):
         except Exception:
             return float("inf"), False
 
-    def perturb(self, img_orig_tensor, epsilon=16.0, num_iter=None):
+    def _grid_to_delta(self, theta, attention_mask):
+        """
+        Converte i coefficienti della griglia (grid x grid) in una
+        perturbazione a piena risoluzione, limitata dalla maschera.
+        """
+        g = theta.unsqueeze(0).unsqueeze(0)  # [1, 1, g, g]
+        up = F.interpolate(
+            g,
+            size=(attention_mask.shape[1], attention_mask.shape[2]),
+            mode="bilinear",
+            align_corners=False,
+        ).squeeze(0)  # [1, H, W]
+        delta = up * attention_mask[:1]
+        return delta.repeat(3, 1, 1)
+
+    def _shrink_theta(self, original_pixels, theta, attention_mask, max_queries):
+        """
+        v4: riduce la perturbazione evasante (backoff moltiplicativo + dropout
+        di celle della griglia) mantenendo l'evasione, per alzare la
+        similarita' con l'originale.
+        """
+        queries = 0
+        best_theta = theta.clone()
+        current = theta.clone()
+        grid = theta.shape[0]
+
+        for factor in (0.75, 0.5, 0.35, 0.2, 0.1):
+            if queries >= max_queries:
+                break
+            trial_theta = current * factor
+            trial = torch.clamp(
+                original_pixels + self._grid_to_delta(trial_theta, attention_mask),
+                0.0, 255.0,
+            )
+            _, evaded = self._compute_score(trial, None)
+            queries += 1
+            if evaded:
+                best_theta = trial_theta
+                current = trial_theta
+
+        for _ in range(12):
+            if queries >= max_queries:
+                break
+            keep = (torch.rand(grid, grid, device=theta.device) > 0.3).float()
+            trial_theta = current * keep
+            trial = torch.clamp(
+                original_pixels + self._grid_to_delta(trial_theta, attention_mask),
+                0.0, 255.0,
+            )
+            _, evaded = self._compute_score(trial, None)
+            queries += 1
+            if evaded:
+                best_theta = trial_theta
+                current = trial_theta
+
+        return best_theta, queries
+
+    def perturb(self, img_orig_tensor, epsilon=64.0, num_iter=None):
         if num_iter is None:
             num_iter = self.default_num_iter
 
@@ -258,96 +346,117 @@ class GradientFreeSpatialAttentionAttack(BaseAttack):
         if not torch.isfinite(attention_mask).all():
             return original_scale.clone(), False, 0
 
-        current_perturbation = torch.zeros_like(original_pixels)
-        best_candidate = original_pixels.clone()
-        best_score = float("inf")
-        
-        successful_candidates = []
-        step_size = float(epsilon) * 0.15
+        grid = self.GRID_SIZE
+        total_queries = 0
+        successful_theta = None
+        success_queries = 0
+        global_best_score = float("inf")
+        global_best_theta = torch.zeros(grid, grid, device=self.device)
 
-        # Vettore di momento / spinta direzionale basato sullo score
-        directional_momentum = torch.zeros_like(original_pixels)
+        iters_per_restart = max(10, num_iter // self.num_restarts)
 
-        for iteration in range(num_iter):
-            # Combina la componente stocastica con la spinta direzionale accumulata
-            random_dir = torch.sign(torch.randn_like(original_pixels)) * attention_mask
-            direction = torch.sign(random_dir + 0.5 * directional_momentum) * attention_mask
+        for restart in range(self.num_restarts):
+            # v4: se abbiamo gia' un'evasione, il budget residuo va allo
+            # shrink (che migliora la similarita'), non ad altre ricerche.
+            if successful_theta is not None:
+                break
 
-            perturbation_plus = torch.clamp(
-                current_perturbation + step_size * direction,
-                min=-epsilon,
-                max=epsilon,
+            theta = torch.zeros(grid, grid, device=self.device)
+            momentum = torch.zeros(grid, grid, device=self.device)
+            restart_best_score = float("inf")
+            restart_best_theta = theta.clone()
+
+            step_size = 1.0  # step nello spazio normalizzato della griglia
+
+            for iteration in range(iters_per_restart):
+                total_queries += 2
+
+                random_dir = torch.randn(grid, grid, device=self.device)
+                direction = torch.sign(
+                    random_dir + 0.6 * momentum
+                )
+
+                theta_plus = torch.clamp(
+                    theta + step_size * direction, min=-1.0, max=1.0
+                )
+                theta_minus = torch.clamp(
+                    theta - step_size * direction, min=-1.0, max=1.0
+                )
+
+                candidate_plus = torch.clamp(
+                    original_pixels
+                    + epsilon * self._grid_to_delta(theta_plus, attention_mask),
+                    0.0, 255.0,
+                )
+                candidate_minus = torch.clamp(
+                    original_pixels
+                    + epsilon * self._grid_to_delta(theta_minus, attention_mask),
+                    0.0, 255.0,
+                )
+
+                score_plus, evaded_plus = self._compute_score(
+                    candidate_plus, original_shape
+                )
+                score_minus, evaded_minus = self._compute_score(
+                    candidate_minus, original_shape
+                )
+
+                if evaded_plus:
+                    successful_theta = theta_plus.clone()
+                    success_queries = total_queries
+                    break
+                if evaded_minus:
+                    successful_theta = theta_minus.clone()
+                    success_queries = total_queries
+                    break
+
+                if score_plus <= score_minus:
+                    theta = theta_plus
+                    chosen_score = score_plus
+                    momentum = 0.6 * momentum + 0.4 * direction
+                else:
+                    theta = theta_minus
+                    chosen_score = score_minus
+                    momentum = 0.6 * momentum - 0.4 * direction
+
+                if chosen_score < restart_best_score:
+                    restart_best_score = chosen_score
+                    restart_best_theta = theta.clone()
+
+            if restart_best_score < global_best_score:
+                global_best_score = restart_best_score
+                global_best_theta = restart_best_theta.clone()
+
+        if successful_theta is not None:
+            # v4: fase di shrink entro il budget residuo (tetto 1000 query).
+            budget = max(0, self.SIM_BUDGET_QUERIES - success_queries)
+            shrunk_theta, shrink_queries = self._shrink_theta(
+                original_pixels, successful_theta, attention_mask, budget
             )
+            success_queries += shrink_queries
 
-            perturbation_minus = torch.clamp(
-                current_perturbation - step_size * direction,
-                min=-epsilon,
-                max=epsilon,
+            result = torch.clamp(
+                original_pixels
+                + epsilon * self._grid_to_delta(shrunk_theta, attention_mask),
+                0.0, 255.0,
             )
+            result = self._to_original_scale(result, input_normalized)
+            return result.detach(), True, success_queries
 
-            candidate_plus = torch.clamp(
-                original_pixels + perturbation_plus,
-                min=0.0,
-                max=255.0,
-            )
-
-            candidate_minus = torch.clamp(
-                original_pixels + perturbation_minus,
-                min=0.0,
-                max=255.0,
-            )
-
-            score_plus, evaded_plus = self._compute_score(
-                candidate_plus, original_shape
-            )
-            score_minus, evaded_minus = self._compute_score(
-                candidate_minus, original_shape
-            )
-
-            if evaded_plus:
-                l2_dist = torch.norm(candidate_plus - original_pixels).item()
-                successful_candidates.append((l2_dist, candidate_plus, iteration + 1))
-
-            if evaded_minus:
-                l2_dist = torch.norm(candidate_minus - original_pixels).item()
-                successful_candidates.append((l2_dist, candidate_minus, iteration + 1))
-
-            # Aggiornamento della spinta direzionale in base a quale verso riduce lo score della SVM
-            if score_plus < score_minus:
-                chosen_perturbation = perturbation_plus
-                chosen_candidate = candidate_plus
-                chosen_score = score_plus
-                # Se il verso plus ha migliorato lo score, rinforziamo la direzione
-                directional_momentum = 0.7 * directional_momentum + 0.3 * direction
-            else:
-                chosen_perturbation = perturbation_minus
-                chosen_candidate = candidate_minus
-                chosen_score = score_minus
-                # Se il verso minus è stato migliore, spingiamo nella direzione opposta
-                directional_momentum = 0.7 * directional_momentum - 0.3 * direction
-
-            current_perturbation = chosen_perturbation
-
-            if chosen_score < best_score:
-                best_score = chosen_score
-                best_candidate = chosen_candidate.clone()
-
-        if successful_candidates:
-            successful_candidates.sort(key=lambda x: x[0])
-            _, best_success_cand, success_iter = successful_candidates[0]
-            result = self._to_original_scale(best_success_cand, input_normalized)
-            return result.detach(), True, success_iter
-
-        result = self._to_original_scale(
-            best_candidate, input_normalized
+        # Fallback: miglior score trovato (nessuna evasione)
+        result = torch.clamp(
+            original_pixels
+            + epsilon * self._grid_to_delta(global_best_theta, attention_mask),
+            0.0, 255.0,
         )
+        result = self._to_original_scale(result, input_normalized)
 
-        return result.detach(), False, num_iter
+        return result.detach(), False, total_queries
 
     def attack(
         self,
         image_tensor: torch.Tensor,
-        epsilon=16.0,
+        epsilon=64.0,
         **kwargs,
     ) -> torch.Tensor:
         image_adv, _, _ = self.perturb(
