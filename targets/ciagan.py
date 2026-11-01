@@ -1,4 +1,3 @@
-%%writefile targets/ciagan.py
 import sys
 from pathlib import Path
 import yaml
