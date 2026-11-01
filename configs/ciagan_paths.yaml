@@ -1,4 +1,3 @@
-%%writefile configs/ciagan_paths.yaml
 # Configurazione dei percorsi per i dataset e i modelli CIAGAN
 # Modifica i valori in base al tuo ambiente o al tuo account Kaggle
 
