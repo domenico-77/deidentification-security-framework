@@ -1,4 +1,3 @@
-%%writefile attacks/blackbox/gradient_free_spatial_attention_attack.py
 import bz2
 import urllib.request
 from pathlib import Path
