@@ -57,7 +57,7 @@ def main():
         target=target,
         detector_wrapper=target.detector_wrapper,
         device=device,
-        num_iter=200
+        num_iter=500
     )
 
     dataset = LFWDataset(root_dir=args.dataset_path)
