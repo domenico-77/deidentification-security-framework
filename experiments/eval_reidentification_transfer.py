@@ -1,11 +1,25 @@
 import sys
 from pathlib import Path
-# Aggiungiamo la root del progetto al path per importare eval_reidentification e i moduli degli attacchi
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+RETINAFACE_REPO_PATH = "/kaggle/input/datasets/domenicovicenti/pytorch-retinaface-repo"
+
 import os
+if os.path.isdir(RETINAFACE_REPO_PATH):
+    if RETINAFACE_REPO_PATH not in sys.path:
+        sys.path.insert(0, RETINAFACE_REPO_PATH)
+    print(f"[INFO] RetinaFace repo path aggiunto al sys.path: {RETINAFACE_REPO_PATH}")
+else:
+    print(f"[WARN] {RETINAFACE_REPO_PATH} non esiste. "
+          f"Se usi --surrogate retinaface, fallirà con ModuleNotFoundError: 'models'.")
+    print(f"       Controlla il nome del dataset con: !ls /kaggle/input/")
+# =========================================================================
+
 import argparse
+import inspect
 import torch
 import pandas as pd
+import numpy as np
 from tqdm import tqdm
 
 from eval_reidentification import BaseEvaluator
@@ -14,273 +28,283 @@ from attacks.transfer.bim_transfer import TransferBIMAttack
 from attacks.transfer.pgd_transfer import TransferPGDAttack
 from attacks.transfer.deepfool_transfer import TransferDeepFoolAttack
 from attacks.transfer.uap_transfer import TransferUAPAttack
-from attacks.whitebox.ciagan_hog_surrogate_attack import CiaganHogSurrogateAttack
+from attacks.transfer.ciagan_identity_leakage_attack import CiaganIdentityLeakageAttack
 from data_loaders.lfw import LFWDataset
 
+
 class TransferEvaluator(BaseEvaluator):
-    """
-    Evaluator specializzato per Transfer / Gray-Box Attacks.
-    Eredita l'intero motore di valutazione e gestione InsightFace da BaseEvaluator.
-    """
     def __init__(self):
         super().__init__()
 
-    def get_attack_instance(self, attack_name, detector_wrapper, dsfd_net, mean_tensor, epsilon, surrogate_net=None):
-        """Sovrascrive la factory per restituire gli attacchi di trasferimento."""
+    @staticmethod
+    def _extract_image_tensor(output):
+        """Estrae il tensore immagine da output che può essere tensor, dict, tuple.
+        Necessario per CIAGAN che restituisce {"im": tensor}."""
+        if isinstance(output, dict):
+            for k in ("im", "image", "output", "result", "images", "faces"):
+                if k in output:
+                    return output[k]
+            for v in output.values():
+                if isinstance(v, torch.Tensor):
+                    return v
+            raise ValueError(f"dict senza tensore: chiavi={list(output.keys())}")
+        if isinstance(output, (tuple, list)):
+            return output[0]
+        return output
+
+    @staticmethod
+    def _to_chw_tensor(x):
+        if isinstance(x, torch.Tensor):
+            t = x.detach().cpu()
+            if t.dim() == 4:
+                t = t.squeeze(0)
+            if t.dtype == torch.uint8:
+                t = t.float()
+            return t
+        return torch.from_numpy(np.array(x)).permute(2, 0, 1).float()
+
+    @staticmethod
+    def _call_perturb(attack, img, epsilon):
+        """Chiama attack.perturb gestendo la firma in modo pulito (niente
+        try/except TypeError che maschera errori veri)."""
+        sig = inspect.signature(attack.perturb)
+        if "epsilon" in sig.parameters:
+            return attack.perturb(img, epsilon=epsilon)
+        return attack.perturb(img)
+
+    def get_attack_instance(self, attack_name, target, detector_wrapper, dsfd_net,
+                            mean_tensor, epsilon, surrogate_net=None):
         attack_name = attack_name.lower()
+        common = dict(
+            detector=detector_wrapper,
+            detector_wrapper=detector_wrapper,
+            dsfd_net=dsfd_net,
+            mean_tensor=mean_tensor,
+            surrogate_net=surrogate_net,
+            device=self.device,
+        )
+
         if attack_name == "pgd":
-            return TransferPGDAttack(
-                detector=detector_wrapper,          
-                detector_wrapper=detector_wrapper,
-                dsfd_net=dsfd_net,
-                mean_tensor=mean_tensor,
-                surrogate_net=surrogate_net,
-                device=self.device,
-                use_momentum=True,
-                use_di=True
-            )
+            return TransferPGDAttack(**common, use_momentum=True, use_di=True)
         elif attack_name == "fgsm":
-            return TransferFGSMAttack(
-                detector=detector_wrapper,          
-                detector_wrapper=detector_wrapper,
-                dsfd_net=dsfd_net,
-                mean_tensor=mean_tensor,
-                surrogate_net=surrogate_net,
-                device=self.device
-            )
+            return TransferFGSMAttack(**common)
         elif attack_name == "bim":
-            return TransferBIMAttack(
-                detector=detector_wrapper,          
-                detector_wrapper=detector_wrapper,
-                dsfd_net=dsfd_net,
-                mean_tensor=mean_tensor,
-                surrogate_net=surrogate_net,
-                device=self.device
-            )
+            return TransferBIMAttack(**common)
         elif attack_name == "deepfool":
-            return TransferDeepFoolAttack(
-                detector=detector_wrapper,          
-                detector_wrapper=detector_wrapper,
-                dsfd_net=dsfd_net,
-                mean_tensor=mean_tensor,
-                surrogate_net=surrogate_net,
-                device=self.device
-            )
+            return TransferDeepFoolAttack(**common)
         elif attack_name == "uap":
             return TransferUAPAttack(
-                detector_wrapper=detector_wrapper,
-                dsfd_net=dsfd_net,
-                mean_tensor=mean_tensor,
-                surrogate_net=surrogate_net,
-                device=self.device
+                detector_wrapper=detector_wrapper, dsfd_net=dsfd_net,
+                mean_tensor=mean_tensor, surrogate_net=surrogate_net, device=self.device,
             )
-        elif attack_name == "hog_surrogate":
-            return CiaganHogSurrogateAttack(
-                detector_wrapper=detector_wrapper,
-                mean_tensor=mean_tensor,
+        elif attack_name in ("ciagan_il", "ciagan_identity_leakage"):
+            return CiaganIdentityLeakageAttack(
                 target=target,
-                device=self.device
+                detector_wrapper=detector_wrapper,
+                device=self.device,
+                mean_tensor=mean_tensor,
             )
         else:
-            raise ValueError(f"Attacco transfer non supportato o non valido: {attack_name}")
+            raise ValueError(f"Attacco transfer non supportato: {attack_name}")
+
+    def _load_retinaface(self, weights_path):
+        """Carica RetinaFace usando il wrapper del repo (RetinaFaceDetector).
+
+        Il wrapper importa `models.retinaface.retinaface.RetinaFace`, che
+        richiede che RETINAFACE_REPO_PATH sia nel sys.path (fatto in cima).
+        """
+        if not os.path.exists(weights_path):
+            raise FileNotFoundError(f"Pesi RetinaFace non trovati: {weights_path}")
+
+        try:
+            from detectors.retinaface import RetinaFaceDetector
+        except ImportError as ie:
+            print(f"[ERROR] Modulo detectors.retinaface non trovato: {ie}")
+            raise ie
+
+        # RetinaFaceDetector.__init__ → _load_retinaface → import models.retinaface...
+        # Se la cartella `models/` non è nel sys.path, dà ModuleNotFoundError.
+        # Catturiamo per dare un messaggio chiaro all'utente.
+        try:
+            net = RetinaFaceDetector(weights_path=weights_path, device=self.device)
+        except ModuleNotFoundError as e:
+            if "models" in str(e):
+                raise RuntimeError(
+                    "RetinaFaceDetector non riesce a importare `models.retinaface.retinaface`.\n"
+                    f"Sys.path contiene: {RETINAFACE_REPO_PATH} "
+                    f"(esiste={os.path.isdir(RETINAFACE_REPO_PATH)})\n"
+                    "Cause probabili:\n"
+                    "  1) Il dataset Kaggle del repo RetinaFace non è collegato al notebook\n"
+                    "  2) Il nome del dataset è diverso (controlla con `!ls /kaggle/input/`)\n"
+                    "  3) La struttura del repo è diversa (es. c'è una sottocartella)\n"
+                    f"Dettaglio originale: {e}"
+                ) from e
+            raise
+
+        print(f"[SUCCESSO] RetinaFace caricato da: {weights_path}")
+        return net
 
     def run_transfer(self):
         parser = argparse.ArgumentParser(description="Valutazione Identity Leakage & Re-identification (Transfer Mode)")
-        parser.add_argument("--attack", type=str, default="pgd", choices=["fgsm", "bim", "pgd", "uap", "deepfool","hog_surrogate"], help="Tipo di attacco transfer da testare")
-        parser.add_argument("--model", type=str, default="deeprivacy2", choices=["deeprivacy2", "ciagan"], help="Modello di anonimizzazione target")
-        parser.add_argument("--surrogate", type=str, default="", choices=["retinaface", "yolo"], help="Modello surrogato per il calcolo dei gradienti")
-        parser.add_argument("--surrogate_weights", type=str, default="", help="Percorso ai pesi del modello surrogato (es. .pt o .pth)")
-        parser.add_argument("--epsilon", type=float, default=8.0, help="Valore di epsilon per la perturbazione")
-        parser.add_argument("--num_samples", type=int, default=30, help="Numero di campioni del dataset da valutare")
+        parser.add_argument("--attack", type=str, default="pgd",
+                            choices=["fgsm", "bim", "pgd", "uap", "deepfool", "ciagan_il"])
+        parser.add_argument("--model", type=str, default="ciagan",
+                            choices=["deeprivacy2", "ciagan"])
+        parser.add_argument("--surrogate", type=str, default="",
+                            choices=["", "retinaface", "yolo"])
+        parser.add_argument("--surrogate_weights", type=str, default="")
+        parser.add_argument("--epsilon", type=float, default=8.0)
+        parser.add_argument("--num_samples", type=int, default=30)
         args = parser.parse_args()
 
         print(f"\n[INFO] Avvio Identity Leakage Analysis & Re-identification (TRANSFER MODE)")
         print(f" -> Attacco: {args.attack.upper()} (Epsilon: {args.epsilon})")
-        print(f" -> Surrogato: {args.surrogate.upper()} (Pesi: {args.surrogate_weights or 'Default/None'})")
+        print(f" -> Surrogato: {args.surrogate.upper() if args.surrogate else 'Nessuno'}")
         print(f" -> Target Anonimizzazione: {args.model}")
         print(f" -> Dispositivo: {self.device}")
 
-        # 1. Caricamento del target di anonimizzazione tramite metodo ereditato
         target, anonymizer, detector_wrapper, dsfd_net, mean_tensor = self.setup_target(args.model)
 
-        # 2. Caricamento del Modello Surrogato
+        if mean_tensor is None:
+            print("[WARN] mean_tensor=None dal target — uso zero-tensor come fallback")
+            mean_tensor = torch.zeros(1, 3, 1, 1, device=self.device)
+
+        # --- Surrogato ---
         surrogate_net = None
-        print(f"[INFO] Caricamento modello surrogato ({args.surrogate})...")
-        if args.surrogate == "yolo":
-            try:
+        if args.surrogate:
+            print(f"[INFO] Caricamento modello surrogato ({args.surrogate})...")
+            if args.surrogate == "yolo":
                 from detectors.yolo import YoloFaceDetector
                 weights_path = args.surrogate_weights if args.surrogate_weights else "yolov8n-face.pt"
-                yolo_detector = YoloFaceDetector(weights_path=weights_path, device=self.device)
-                surrogate_net = yolo_detector
-                print(f"[SUCCESSO] YOLO caricato correttamente da: {weights_path}")
-            except Exception as e:
-                print(f"[ERROR] Errore nel caricamento di YOLO: {e}")
-                raise e
-                
-        elif args.surrogate == "retinaface":
-            try:
-                # Assicurati che il modulo retinaface sia disponibile nel path o nel progetto
-                from detectors.retinaface import RetinaFaceDetector
-            except ImportError as ie:
-                print(f"[ERROR] Impossibile trovare il modulo RetinaFace in detectors.retinaface.retinaface: {ie}")
-                raise ie
-                # Inizializzazione RetinaFace con configurazione MobileNet0.25 (come i tuoi pesi)
-                cfg = {
-                    'name': 'mobilenet0.25',
-                    'min_sizes': [[16, 32], [64, 128], [256, 512]],
-                    'steps': [8, 16, 32],
-                    'variance': [0.1, 0.2],
-                    'clip': False,
-                    'loc_weight': 2.0,
-                    'cls_weight': 1.0,
-                    'landm_weight': 1.0,
-                    'pretrain': False
-                }
-                surrogate_net = RetinaFace(cfg=cfg, phase='test')
-                
-                weights_path = args.surrogate_weights if args.surrogate_weights else "/kaggle/input/datasets/domenicovicenti/retinaface-weights/mobilenet0.25_Final.pth"
-                checkpoint = torch.load(weights_path, map_location=self.device)
-                
-                if 'state_dict' in checkpoint:
-                    checkpoint = checkpoint['state_dict']
-                # Rimuove eventuali prefissi 'module.' salvati da DataParallel
-                new_state_dict = {k.replace('module.', ''): v for k, v in checkpoint.items()}
-                surrogate_net.load_state_dict(new_state_dict, strict=False)
-                
-                surrogate_net = surrogate_net.to(self.device).eval()
-                print(f"[SUCCESSO] RetinaFace caricato correttamente da: {weights_path}")
-            except Exception as e:
-                print(f"[ERROR] Errore nel caricamento dei pesi di RetinaFace: {e}")
-                raise e
+                surrogate_net = YoloFaceDetector(weights_path=weights_path, device=self.device)
+                print(f"[SUCCESSO] YOLO caricato da: {weights_path}")
+            elif args.surrogate == "retinaface":
+                weights_path = args.surrogate_weights if args.surrogate_weights else \
+                    "/kaggle/input/datasets/domenicovicenti/retinaface-weights/mobilenet0.25_Final.pth"
+                surrogate_net = self._load_retinaface(weights_path)
+        else:
+            print("[INFO] Nessun surrogato: l'attacco userà dsfd_net come surrogate differenziabile.")
 
-        # 3. Istanziazione dell'attacco di trasferimento tramite factory personalizzata
+        # Avviso se non c'è alcun detector differenziabile
+        if surrogate_net is None and dsfd_net is None and args.attack.lower() in ("fgsm", "bim", "pgd", "deepfool"):
+            print("[WARN] Nessun detector differenziabile (surrogate_net=None, dsfd_net=None).")
+            print("       FGSM/BIM/PGD/DeepFool non avranno gradienti → l'attacco sarà inerte.")
+
         attack = self.get_attack_instance(
-            args.attack, 
-            detector_wrapper=detector_wrapper, 
-            dsfd_net=dsfd_net, 
-            mean_tensor=mean_tensor, 
-            epsilon=args.epsilon, 
-            surrogate_net=surrogate_net
+            args.attack, target=target, detector_wrapper=detector_wrapper,
+            dsfd_net=dsfd_net, mean_tensor=mean_tensor,
+            epsilon=args.epsilon, surrogate_net=surrogate_net,
         )
 
-        # 4. Caricamento dataset LFW
         dataset = LFWDataset(root_dir="/kaggle/input/datasets/jessicali9530/lfw-dataset/lfw-deepfunneled/lfw-deepfunneled")
-        # Se l'attacco è UAP, eseguiamo il fit preliminare sul dataset
+
         if args.attack.lower() == "uap":
-            print("[INFO] Rilevato attacco UAP (Transfer): avvio della fase di fit (100 campioni, 8 epoche)...")
+            print("[INFO] UAP: avvio fit...")
             from torch.utils.data import DataLoader, Subset
             subset_indices = range(min(100, len(dataset)))
             uap_subset = Subset(dataset, subset_indices)
             train_loader = DataLoader(uap_subset, batch_size=4, shuffle=True)
             attack.fit(train_loader, epsilon=args.epsilon, alpha=2.0, epochs=8, max_iter_per_img=15)
-            
+
         results = []
-        print(f"[INFO] Elaborazione di {min(args.num_samples, len(dataset))} campioni con analisi di similarità (Transfer)...")
+        print(f"[INFO] Elaborazione di {min(args.num_samples, len(dataset))} campioni...")
 
         for idx in tqdm(range(min(args.num_samples, len(dataset)))):
             sample = dataset[idx]
             img_orig = sample[0] if isinstance(sample, (list, tuple)) else sample
-            
             if img_orig.ndim == 3 and img_orig.shape[2] == 3:
                 img_orig = img_orig.permute(2, 0, 1)
-                
+
             img_tensor = img_orig.clone().detach().to(self.device).float()
             if img_tensor.ndim == 3:
                 img_tensor = img_tensor.unsqueeze(0)
 
-            # A. Generazione immagine perturbata tramite l'attacco di trasferimento
-            if hasattr(attack, "perturb"):
-                try:
-                    img_adv, success, _ = attack.perturb(img_tensor[0], epsilon=args.epsilon)
-                except TypeError:
-                    img_adv, success, _ = attack.perturb(img_tensor[0])
-            else:
-                raise AttributeError("L'oggetto attacco non possiede un metodo .perturb() valido.")
+            # A. Perturbazione
+            try:
+                img_adv, success, _ = self._call_perturb(attack, img_tensor[0], args.epsilon)
+            except Exception as e:
+                print(f"[ERROR] sample {idx} perturb fallito: {type(e).__name__}: {e}")
+                raise
 
-            # B. Passaggio attraverso la pipeline di anonimizzazione
+            # Diagnostica: l'attacco ha modificato l'immagine?
+            delta_linf = (img_adv.float() - img_tensor[0].float()).abs().max().item()
+
+            # B. Pipeline (robusto a dict di CIAGAN)
             with torch.no_grad():
                 img_single = img_tensor[0] if img_tensor.ndim == 4 else img_tensor
                 if img_single.max() <= 1.0:
                     img_single = img_single * 255.0
                 img_single_uint8 = img_single.detach().byte().to(self.device)
-                
-                if hasattr(target, "anonymize"):
-                    img_anonymized = target.anonymize(img_single_uint8)
-                elif hasattr(anonymizer, "__call__"):
-                    img_anonymized = anonymizer(img_single_uint8)
-                else:
-                    raise AttributeError("Il target DeepPrivacy2 non possiede un metodo di anonimizzazione valido.")
-                
+
+                raw_anon = (target.anonymize(img_single_uint8)
+                            if hasattr(target, "anonymize")
+                            else anonymizer(img_single_uint8))
+                img_anonymized = self._extract_image_tensor(raw_anon)
+
                 img_adv_single = img_adv[0] if img_adv.ndim == 4 else img_adv
                 if img_adv_single.max() <= 1.0:
                     img_adv_single = img_adv_single * 255.0
                 img_adv_uint8 = img_adv_single.detach().byte().to(self.device)
-                
-                if hasattr(target, "anonymize"):
-                    img_pipeline_adv = target.anonymize(img_adv_uint8)
-                elif hasattr(anonymizer, "__call__"):
-                    img_pipeline_adv = anonymizer(img_adv_uint8)
-                else:
-                    raise AttributeError("Il target DeepPrivacy2 non possiede un metodo di anonimizzazione valido.")
 
-            # C. Estrazione Embedding e Calcolo Similarità (tramite metodi ereditati)
+                raw_adv = (target.anonymize(img_adv_uint8)
+                           if hasattr(target, "anonymize")
+                           else anonymizer(img_adv_uint8))
+                img_pipeline_adv = self._extract_image_tensor(raw_adv)
+
+            # C. Similarità (InsightFace)
             sim_orig_anon = 0.0
             sim_orig_adv = 0.0
-
             if self.recognizer is not None:
-                if isinstance(img_anonymized, torch.Tensor):
-                    img_anon_chw = img_anonymized.detach().cpu()
-                    if img_anon_chw.dim() == 4: img_anon_chw = img_anon_chw.squeeze(0)
-                else:
-                    img_anon_chw = torch.from_numpy(np.array(img_anonymized)).permute(2, 0, 1)
-
-                if isinstance(img_pipeline_adv, torch.Tensor):
-                    img_adv_chw = img_pipeline_adv.detach().cpu()
-                    if img_adv_chw.dim() == 4: img_adv_chw = img_adv_chw.squeeze(0)
-                else:
-                    img_adv_chw = torch.from_numpy(np.array(img_pipeline_adv)).permute(2, 0, 1)
-
+                img_anon_chw = self._to_chw_tensor(img_anonymized)
+                img_adv_chw = self._to_chw_tensor(img_pipeline_adv)
                 emb_orig = self.extract_embedding(img_single.detach().cpu())
                 emb_anon = self.extract_embedding(img_anon_chw)
-                emb_adv_pipe = self.extract_embedding(img_adv_chw)
-
+                emb_adv = self.extract_embedding(img_adv_chw)
                 if emb_orig is not None and emb_anon is not None:
                     sim_orig_anon = self.compute_cosine_similarity(emb_orig, emb_anon)
-                if emb_orig is not None and emb_adv_pipe is not None:
-                    sim_orig_adv = self.compute_cosine_similarity(emb_orig, emb_adv_pipe)
+                if emb_orig is not None and emb_adv is not None:
+                    sim_orig_adv = self.compute_cosine_similarity(emb_orig, emb_adv)
 
-            # D. Registrazione metriche estese
             results.append({
                 "sample_id": idx,
                 "attack": f"transfer_{args.attack}",
-                "surrogate": args.surrogate,
+                "surrogate": args.surrogate or "none",
                 "epsilon": args.epsilon,
+                "delta_linf": round(delta_linf, 4),     # prova che l'attacco ha agito
                 "detector_evaded": success,
-                "pipeline_behavior": "Bypassed (Original face retained)" if success else "Anonymized (Face replaced)",
                 "sim_orig_vs_anonymized": round(sim_orig_anon, 4),
-                "sim_orig_vs_adversarial_pipe": round(sim_orig_adv, 4)
+                "sim_orig_vs_adversarial_pipe": round(sim_orig_adv, 4),
             })
 
-        # Salvataggio risultati in CSV
         df = pd.DataFrame(results)
         output_dir = f"./results_identity_{args.model}_transfer"
         os.makedirs(output_dir, exist_ok=True)
-        
-        output_csv = os.path.join(output_dir, f"identity_leakage_similarity_{args.attack}_surrogate_{args.surrogate}_eps{args.epsilon}.csv")
+        output_csv = os.path.join(
+            output_dir,
+            f"identity_leakage_similarity_{args.attack}_surrogate_{args.surrogate or 'none'}_eps{args.epsilon}.csv",
+        )
         df.to_csv(output_csv, index=False)
-        print(f"\n[SUCCESSO] Analisi di similarità transfer completata. Report salvato in: {output_csv}")
+        print(f"\n[SUCCESSO] Report in: {output_csv}")
 
-        # STAMPA TABELLA RIASSUNTIVA E STATISTICHE A TERMINALE
-        print("\n" + "="*80)
-        print(" TABELLA RIASSUNTIVA TRANSFER (Campioni elaborati)")
-        print("="*80)
+        print("\n" + "=" * 100)
+        print(" TABELLA RIASSUNTIVA TRANSFER")
+        print("=" * 100)
         print(df.to_string(index=False))
-        
-        print("\n" + "="*80)
-        print(" STATISTICHE DESCRITTIVE DELLE SIMILARITÀ TRANSFER (ArcFace)")
-        print("="*80)
+
+        # Diagnostica aggregata delta_linf
+        if "delta_linf" in df.columns:
+            mean_delta = df["delta_linf"].mean()
+            print(f"\n[DIAG] delta_linf medio = {mean_delta:.4f} (max = {df['delta_linf'].max():.4f})")
+            if mean_delta < 0.01:
+                print("[WARN] delta_linf ≈ 0: l'attacco NON ha modificato l'immagine.")
+                print("       Cause: surrogate_net=None, dsfd_net=None, o attacco fallito silenziosamente.")
+
+        print("\n" + "=" * 100)
+        print(" STATISTICHE DESCRITTIVE (InsightFace buffalo_l)")
+        print("=" * 100)
         print(df[["sim_orig_vs_anonymized", "sim_orig_vs_adversarial_pipe"]].describe().to_string())
-        print("="*80)
+        print("=" * 100)
+
 
 if __name__ == "__main__":
     evaluator = TransferEvaluator()
