@@ -1,0 +1,10 @@
+%%writefile configs/ciagan_paths.yaml
+# Configurazione dei percorsi per i dataset e i modelli CIAGAN
+# Modifica i valori in base al tuo ambiente o al tuo account Kaggle
+
+target:
+  name: "ciagan"
+  models_dir: "/kaggle/input/datasets/domenicovicenti/ciagan-models"
+  repo_root: "/kaggle/input/datasets/domenicovicenti/ciagan-repository/ciagan"
+  checkpoint_filename: "modelG_ciagan.pth"
+  landmark_predictor: "shape_predictor_68_face_landmarks.dat"
