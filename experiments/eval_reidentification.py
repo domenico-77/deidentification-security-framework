@@ -65,6 +65,7 @@ from attacks.uap import UAPAttack
 from attacks.deepfool import DeepFoolAttack
 from data_loaders.lfw import LFWDataset
 
+
 class BaseEvaluator:
     def __init__(self):
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -92,7 +93,7 @@ class BaseEvaluator:
         """Inizializza il recognizer facciale (ArcFace / InsightFace)."""
         if not self.check_and_install_insightface():
             return None
-        
+
         from insightface.app import FaceAnalysis
         try:
             recognizer = FaceAnalysis(name='antelopev2', providers=['CUDAExecutionProvider' if self.device=='cuda' else 'CPUExecutionProvider'])
@@ -174,12 +175,15 @@ class BaseEvaluator:
             pass
         return None
 
+    # =========================================================================
+    # FIX: setup_target con fallback mean_tensor per CIAGAN
+    # =========================================================================
     def setup_target(self, model_name):
-        """Carica il target di anonimizzazione (es. DeepPrivacy2)."""
+        """Carica il target di anonimizzazione."""
         if model_name == "deeprivacy2":
             target = DeepPrivacy2Target(models_dir="/kaggle/input/datasets/domenicovicenti/deep-privacy2-models")
             anonymizer = target.pipeline if hasattr(target, "pipeline") else target.anonymizer
-            
+
             if hasattr(anonymizer, "forward_G"):
                 _orig_forward_G = anonymizer.forward_G
                 def _patched_forward_G(self_anon, *args, multi_modal_truncation=False, amp=False, truncation_value=0.5, **kwargs):
@@ -190,7 +194,7 @@ class BaseEvaluator:
             dsfd_net = detector_wrapper.face_detector.net.to(self.device).eval()
             mean_tensor = detector_wrapper.face_mean.to(self.device).float().flatten().view(1, 3, 1, 1)
             return target, anonymizer, detector_wrapper, dsfd_net, mean_tensor
-            
+
         elif model_name == "ciagan":
             print("[INFO] Caricamento del target CIAGAN...")
             models_dir = "/kaggle/input/datasets/domenicovicenti/ciagan-models"
@@ -206,28 +210,57 @@ class BaseEvaluator:
                     img_input = img_input / 255.0
                 with torch.no_grad():
                     out = target.anonymizer(img_input)
+
+                # FIX: CIAGANTarget.__call__ restituisce {"im": tensor}; unwrap
+                if isinstance(out, dict):
+                    for k in ("im", "image", "output", "result", "images", "faces"):
+                        if k in out:
+                            out = out[k]
+                            break
+                    else:
+                        out = list(out.values())[0]
+                if isinstance(out, (tuple, list)):
+                    out = out[0]
+
                 if isinstance(out, torch.Tensor):
-                    out = out.squeeze(0)
-                    if out.max() <= 1.0:
-                        out = out * 255.0
-                    return out.byte()
+                    if out.dim() == 4:
+                        out = out.squeeze(0)
+                    if out.dtype != torch.uint8:
+                        if out.max() <= 1.0:
+                            out = out * 255.0
+                        out = out.byte()
+                    return out
                 return out
 
+            # dsfd_net: CIAGAN usa DlibDetectorWrapper, NON un nn.Module torch
+            # → non è utilizzabile come detector differenziabile per FGSM/PGD/BIM.
+            #   Sarà compito del chiamante fornire un surrogate_net (es. RetinaFace).
             dsfd_net = getattr(detector_wrapper, 'face_detector', None)
             if dsfd_net is not None and hasattr(dsfd_net, 'net'):
                 dsfd_net = dsfd_net.net.to(self.device).eval()
+
+            # FIX FONDAMENTALE: mean_tensor fallback a zero-tensor
             mean_tensor = getattr(detector_wrapper, 'face_mean', None)
             if mean_tensor is not None:
                 mean_tensor = mean_tensor.to(self.device).float().flatten().view(1, 3, 1, 1)
+            else:
+                # Zero-tensor = "nessuna normalizzazione". FGSM/BIM/PGD/DeepFool
+                # faranno img - 0 = img, il gradiente scorre correttamente
+                # attraverso il detector (surrogate_net o dsfd_net).
+                mean_tensor = torch.zeros(1, 3, 1, 1, device=self.device)
+                print("[INFO] CIAGAN non espone mean_tensor → fallback a zero-tensor (nessuna normalizzazione).")
 
             return target, ciagan_anonymizer, detector_wrapper, dsfd_net, mean_tensor
         else:
             raise NotImplementedError(f"Modello {model_name} non ancora integrato.")
-        
+
+    # =========================================================================
+    # run() con FIX: unwrap dict nelle pipeline + supporto ciagan
+    # =========================================================================
     def run(self):
         parser = argparse.ArgumentParser(description="Valutazione Identity Leakage & Re-identification Confronto")
         parser.add_argument("--attack", type=str, default="bim", choices=["fgsm", "bim", "pgd", "uap", "deepfool"], help="Tipo di attacco da testare")
-        parser.add_argument("--model", type=str, default="deeprivacy2", choices=["deeprivacy2"], help="Modello di anonimizzazione")
+        parser.add_argument("--model", type=str, default="deeprivacy2", choices=["deeprivacy2", "ciagan"], help="Modello di anonimizzazione")
         parser.add_argument("--epsilon", type=float, default=8.0, help="Valore di epsilon per la perturbazione")
         parser.add_argument("--num_samples", type=int, default=30, help="Numero di campioni del dataset da valutare")
         args = parser.parse_args()
@@ -238,10 +271,18 @@ class BaseEvaluator:
         print(f" -> Dispositivo: {self.device}")
 
         target, anonymizer, detector_wrapper, dsfd_net, mean_tensor = self.setup_target(args.model)
+
+        # Se l'attacco richiede un detector differenziabile e non c'è né dsfd_net
+        # né surrogate_net (es. CIAGAN con FGSM senza --surrogate), avvisa.
+        if dsfd_net is None and args.attack.lower() in ("fgsm", "bim", "pgd", "deepfool"):
+            print("[WARN] dsfd_net=None per questo target. FGSM/BIM/PGD/DeepFool potrebbero "
+                  "fallire. Usa eval_reidentification_transfer.py con --surrogate retinaface "
+                  "per fornire un detector differenziabile.")
+
         attack = self.get_attack_instance(args.attack, detector_wrapper, dsfd_net, mean_tensor, args.epsilon)
 
         dataset = LFWDataset(root_dir="/kaggle/input/datasets/jessicali9530/lfw-dataset/lfw-deepfunneled/lfw-deepfunneled")
-        
+
         if args.attack.lower() == "uap":
             print("[INFO] Rilevato attacco UAP: avvio della fase di fit (100 campioni, 8 epoche)...")
             from torch.utils.data import DataLoader, Subset
@@ -256,10 +297,10 @@ class BaseEvaluator:
         for idx in tqdm(range(min(args.num_samples, len(dataset)))):
             sample = dataset[idx]
             img_orig = sample[0] if isinstance(sample, (list, tuple)) else sample
-            
+
             if img_orig.ndim == 3 and img_orig.shape[2] == 3:
                 img_orig = img_orig.permute(2, 0, 1)
-                
+
             img_tensor = img_orig.clone().detach().to(self.device).float()
             if img_tensor.ndim == 3:
                 img_tensor = img_tensor.unsqueeze(0)
@@ -277,25 +318,25 @@ class BaseEvaluator:
                 if img_single.max() <= 1.0:
                     img_single = img_single * 255.0
                 img_single_uint8 = img_single.detach().byte().to(self.device)
-                
+
                 if hasattr(target, "anonymize"):
                     img_anonymized = target.anonymize(img_single_uint8)
                 elif hasattr(anonymizer, "__call__"):
                     img_anonymized = anonymizer(img_single_uint8)
                 else:
-                    raise AttributeError("Il target DeepPrivacy2 non possiede un metodo di anonimizzazione valido.")
-                
+                    raise AttributeError("Il target non possiede un metodo di anonimizzazione valido.")
+
                 img_adv_single = img_adv[0] if img_adv.ndim == 4 else img_adv
                 if img_adv_single.max() <= 1.0:
                     img_adv_single = img_adv_single * 255.0
                 img_adv_uint8 = img_adv_single.detach().byte().to(self.device)
-                
+
                 if hasattr(target, "anonymize"):
                     img_pipeline_adv = target.anonymize(img_adv_uint8)
                 elif hasattr(anonymizer, "__call__"):
                     img_pipeline_adv = anonymizer(img_adv_uint8)
                 else:
-                    raise AttributeError("Il target DeepPrivacy2 non possiede un metodo di anonimizzazione valido.")
+                    raise AttributeError("Il target non possiede un metodo di anonimizzazione valido.")
 
             sim_orig_anon = 0.0
             sim_orig_adv = 0.0
@@ -335,7 +376,7 @@ class BaseEvaluator:
         df = pd.DataFrame(results)
         output_dir = f"./results_identity_{args.model}"
         os.makedirs(output_dir, exist_ok=True)
-        
+
         output_csv = os.path.join(output_dir, f"identity_leakage_similarity_{args.attack}_eps{args.epsilon}.csv")
         df.to_csv(output_csv, index=False)
         print(f"\n[SUCCESSO] Analisi di similarità completata. Report salvato in: {output_csv}")
@@ -344,12 +385,13 @@ class BaseEvaluator:
         print(" TABELLA RIASSUNTIVA DEI RISULTATI (Campioni elaborati)")
         print("="*80)
         print(df.to_string(index=False))
-        
+
         print("\n" + "="*80)
         print(" STATISTICHE DESCRITTIVE DELLE SIMILARITÀ (ArcFace)")
         print("="*80)
         print(df[["sim_orig_vs_anonymized", "sim_orig_vs_adversarial_pipe"]].describe().to_string())
         print("="*80)
+
 
 if __name__ == "__main__":
     evaluator = BaseEvaluator()
