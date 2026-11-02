@@ -21,12 +21,8 @@ from attacks.blackbox.gradient_free_spatial_attention_attack import GradientFree
 from data_loaders.lfw import LFWDataset
 from targets.ciagan import CIAGANTarget
 
+
 class BlackBoxEvaluator(BaseEvaluator):
-    """
-    Evaluator specializzato per Black-Box Attacks (Score-based & Decision-based).
-    Eredita l'intero motore di valutazione e gestisce in modo uniforme 
-    sia DeepPrivacy2 che CIAGAN tramite il metodo nativo setup_target.
-    """
     def __init__(self):
         super().__init__()
 
@@ -39,7 +35,7 @@ class BlackBoxEvaluator(BaseEvaluator):
             models_dir = "/kaggle/input/datasets/domenicovicenti/ciagan-models"
             target = CIAGANTarget(models_dir=models_dir, device=self.device)
             detector_wrapper = getattr(target, 'detector_wrapper', None)
-            
+
             def ciagan_anonymizer(img_tensor_uint8):
                 if img_tensor_uint8.ndim == 3 and img_tensor_uint8.shape[0] == 3:
                     img_input = img_tensor_uint8.unsqueeze(0).float()
@@ -60,10 +56,21 @@ class BlackBoxEvaluator(BaseEvaluator):
         else:
             return super().setup_target(model_name)
 
-    def get_attack_instance(self, attack_name, detector_wrapper, target, anonymizer, epsilon):
+    def get_attack_instance(self, attack_name, detector_wrapper, target, anonymizer, epsilon,
+                            loss_mode="evasion", region_mode="face"):
         attack_name = attack_name.lower()
+
         if attack_name == "square":
-            return SquareAttack(detector_wrapper=detector_wrapper, device=self.device, n_queries=1000)
+            return SquareAttack(
+                detector_wrapper=detector_wrapper,
+                device=self.device,
+                n_queries=1000,
+                loss_mode=loss_mode,
+                region_mode=region_mode,
+                anonymizer_fn=anonymizer,
+                extract_emb_fn=self.extract_embedding,
+                compute_sim_fn=self.compute_cosine_similarity,
+            )
         elif attack_name == "simba":
             return SimBA(detector_wrapper=detector_wrapper, device=self.device, n_queries=1000)
         elif attack_name == "boundary":
@@ -71,31 +78,26 @@ class BlackBoxEvaluator(BaseEvaluator):
         elif attack_name == "advpatch":
             return AdversarialPatchAttack(detector_wrapper=detector_wrapper, device=self.device)
         elif attack_name == "spsa":
-            anonymizer_fn = target.anonymize if hasattr(target, "anonymize") else (target.anonymizer if hasattr(target, "anonymizer") else anonymizer)
             return SPSAAttack(
                 detector_wrapper=detector_wrapper,
-                anonymizer_fn=anonymizer_fn,
+                anonymizer_fn=anonymizer,
                 extract_emb_fn=self.extract_embedding,
                 compute_sim_fn=self.compute_cosine_similarity,
                 device=self.device,
                 n_iters=50,
-                lr=2.0,
-                delta=1e-2
+                lr=1.0,
+                delta=2.0,
             )
         elif attack_name == "landmark_spoofing":
             return LandmarkSpoofingAttack(
-                target=target,
-                detector_wrapper=detector_wrapper,
-                device=self.device
+                target=target, detector_wrapper=detector_wrapper, device=self.device
             )
         elif attack_name == "gfsa":
             return GradientFreeSpatialAttentionAttack(
-                target=target,
-                detector_wrapper=detector_wrapper,
-                device=self.device
+                target=target, detector_wrapper=detector_wrapper, device=self.device
             )
         else:
-            raise ValueError(f"Attacco black-box non supportato o non valido: {attack_name}")
+            raise ValueError(f"Attacco black-box non supportato: {attack_name}")
 
     @staticmethod
     def _ensure_chw_tensor(img_obj):
@@ -117,7 +119,7 @@ class BlackBoxEvaluator(BaseEvaluator):
             if t.shape[0] != 3 and t.shape[-1] == 3:
                 t = t.permute(2, 0, 1)
             return t
-        
+
         if hasattr(img_obj, "convert"):
             img_obj = np.array(img_obj.convert("RGB"))
 
@@ -146,47 +148,58 @@ class BlackBoxEvaluator(BaseEvaluator):
         elif t.dim() == 2:
             t = t.unsqueeze(0).repeat(3, 1, 1)
         return t
-            
+
     def run_blackbox(self):
         parser = argparse.ArgumentParser(description="Valutazione Identity Leakage & Re-identification (Black-Box Mode)")
-        parser.add_argument("--attack", type=str, default="square", choices=["square", "simba", "boundary", "advpatch", "spsa", "landmark_spoofing", "gfsa"])
-        parser.add_argument("--model", type=str, default="deeprivacy2", choices=["deeprivacy2", "ciagan"])
+        parser.add_argument("--attack", type=str, default="square",
+                            choices=["square", "simba", "boundary", "advpatch", "spsa",
+                                     "landmark_spoofing", "gfsa"])
+        parser.add_argument("--model", type=str, default="deeprivacy2",
+                            choices=["deeprivacy2", "ciagan"])
         parser.add_argument("--epsilon", type=float, default=32.0)
         parser.add_argument("--num_samples", type=int, default=20)
-        
+        parser.add_argument("--loss_mode", type=str, default="evasion",
+                            choices=["evasion", "leakage"],
+                            help="Obiettivo dell'attacco (solo per Square/SimBA)")
         args = parser.parse_args()
 
         print(f"\n[INFO] Avvio Identity Leakage Analysis & Re-identification (BLACK-BOX MODE)")
         print(f" -> Attacco: {args.attack.upper()} (Epsilon: {args.epsilon})")
         print(f" -> Target Anonimizzazione: {args.model.upper()}")
+        print(f" -> Loss mode: {args.loss_mode.upper()}")
         print(f" -> Dispositivo: {self.device}")
 
         target, anonymizer, detector_wrapper, dsfd_net, mean_tensor = self.setup_target(args.model)
 
+        # Region mode: ring per CIAGAN (azzera il volto), face per DP2
+        region_mode = "ring" if args.model == "ciagan" else "face"
+        print(f" -> Region mode: {region_mode.upper()}")
+
         attack = self.get_attack_instance(
-            args.attack, 
-            detector_wrapper=detector_wrapper, 
-            target=target, 
-            anonymizer=anonymizer, 
-            epsilon=args.epsilon
+            args.attack,
+            detector_wrapper=detector_wrapper,
+            target=target,
+            anonymizer=anonymizer,
+            epsilon=args.epsilon,
+            loss_mode=args.loss_mode,
+            region_mode=region_mode,
         )
 
         dataset = LFWDataset(root_dir="/kaggle/input/datasets/jessicali9530/lfw-dataset/lfw-deepfunneled/lfw-deepfunneled")
-        
+
         output_dir = f"./results_identity_{args.model}_blackbox"
         success_img_dir = os.path.join(output_dir, "successful_evasions")
         os.makedirs(success_img_dir, exist_ok=True)
 
         results = []
-        print(f"[INFO] Elaborazione di {min(args.num_samples, len(dataset))} campioni con analisi di similarità (Black-Box)...")
+        print(f"[INFO] Elaborazione di {min(args.num_samples, len(dataset))} campioni...")
 
         for idx in tqdm(range(min(args.num_samples, len(dataset)))):
             sample = dataset[idx]
             img_orig = sample[0] if isinstance(sample, (list, tuple)) else sample
-            
             if img_orig.ndim == 3 and img_orig.shape[2] == 3:
                 img_orig = img_orig.permute(2, 0, 1)
-                
+
             img_tensor = img_orig.clone().detach().to(self.device).float()
             if img_tensor.ndim == 3:
                 img_tensor = img_tensor.unsqueeze(0)
@@ -197,36 +210,27 @@ class BlackBoxEvaluator(BaseEvaluator):
                 except TypeError:
                     img_adv, success, queries = attack.perturb(img_tensor[0])
             else:
-                raise AttributeError("L'oggetto attacco non possiede un metodo .perturb() valido.")
+                raise AttributeError("L'attacco non ha .perturb().")
+
+            # Delta linf dell'attacco (verifica che abbia agito)
+            delta_linf = (img_adv.float() - img_tensor[0].float()).abs().max().item()
 
             with torch.no_grad():
                 img_single = img_tensor[0] if img_tensor.ndim == 4 else img_tensor
                 if img_single.max() <= 1.0:
                     img_single = img_single * 255.0
                 img_single_uint8 = img_single.detach().byte().to(self.device)
-                
-                if hasattr(target, "anonymize"):
-                    img_anonymized = target.anonymize(img_single_uint8)
-                elif hasattr(target, "anonymizer"):
-                    img_anonymized = target.anonymizer(img_single_uint8)
-                elif hasattr(anonymizer, "__call__"):
-                    img_anonymized = anonymizer(img_single_uint8)
-                else:
-                    raise AttributeError("Il target non possiede un metodo di anonimizzazione valido.")
-                
+
+                raw_anon = anonymizer(img_single_uint8)
+                img_anonymized = raw_anon
+
                 img_adv_single = img_adv[0] if img_adv.ndim == 4 else img_adv
                 if img_adv_single.max() <= 1.0:
                     img_adv_single = img_adv_single * 255.0
                 img_adv_uint8 = img_adv_single.detach().byte().to(self.device)
-                
-                if hasattr(target, "anonymize"):
-                    img_pipeline_adv = target.anonymize(img_adv_uint8)
-                elif hasattr(target, "anonymizer"):
-                    img_pipeline_adv = target.anonymizer(img_adv_uint8)
-                elif hasattr(anonymizer, "__call__"):
-                    img_pipeline_adv = anonymizer(img_adv_uint8)
-                else:
-                    raise AttributeError("Il target non possiede un metodo di anonimizzazione valido.")
+
+                raw_adv = anonymizer(img_adv_uint8)
+                img_pipeline_adv = raw_adv
 
             sim_orig_anon = 0.0
             sim_orig_adv = 0.0
@@ -244,58 +248,70 @@ class BlackBoxEvaluator(BaseEvaluator):
                 if emb_orig is not None and emb_adv_pipe is not None:
                     sim_orig_adv = self.compute_cosine_similarity(emb_orig, emb_adv_pipe)
 
-            # Salvataggio automatico del plot se l'attacco ha eluso il detector e ha alta similarità
             if success and sim_orig_adv >= 0.5:
                 fig, axes = plt.subplots(1, 3, figsize=(15, 5))
-                
                 orig_np = img_single.detach().cpu().permute(1, 2, 0).numpy().astype(np.uint8)
                 anon_np = img_anon_chw.permute(1, 2, 0).numpy().astype(np.uint8)
                 adv_np = img_adv_chw.permute(1, 2, 0).numpy().astype(np.uint8)
 
                 axes[0].imshow(orig_np)
-                axes[0].set_title(f"Volto Originale\n(Sample ID: {idx})")
+                axes[0].set_title(f"Volto Originale (ID: {idx})")
                 axes[0].axis('off')
-
                 axes[1].imshow(anon_np)
-                axes[1].set_title(f"Target (Baseline)\nSim: {sim_orig_anon:.4f}")
+                axes[1].set_title(f"Target (Baseline) Sim: {sim_orig_anon:.4f}")
                 axes[1].axis('off')
-
                 axes[2].imshow(adv_np)
-                axes[2].set_title(f"Target (Adversarial Bypass)\nSim: {sim_orig_adv:.4f}")
+                axes[2].set_title(f"Target (Adversarial) Sim: {sim_orig_adv:.4f}")
                 axes[2].axis('off')
 
                 plt.tight_layout()
-                plot_filename = os.path.join(success_img_dir, f"successful_evasion_sample_{idx}_sim_{sim_orig_adv:.2f}.png")
-                plt.savefig(plot_filename, dpi=150)
+                fname = os.path.join(success_img_dir, f"sample_{idx}_sim_{sim_orig_adv:.2f}.png")
+                plt.savefig(fname, dpi=150)
                 plt.close(fig)
 
             results.append({
                 "sample_id": idx,
                 "attack": f"bb_{args.attack}",
+                "loss_mode": args.loss_mode,
+                "region_mode": region_mode,
                 "epsilon": args.epsilon,
+                "delta_linf": round(delta_linf, 4),
                 "detector_evaded": success,
                 "queries_used": queries,
-                "pipeline_behavior": "Bypassed (Original face retained)" if success else "Anonymized (Face replaced)",
                 "sim_orig_vs_anonymized": round(sim_orig_anon, 4),
-                "sim_orig_vs_adversarial_pipe": round(sim_orig_adv, 4)
+                "sim_orig_vs_adversarial_pipe": round(sim_orig_adv, 4),
             })
 
         df = pd.DataFrame(results)
-        output_csv = os.path.join(output_dir, f"identity_leakage_similarity_{args.attack}_eps{args.epsilon}.csv")
+        output_csv = os.path.join(
+            output_dir,
+            f"identity_leakage_similarity_{args.attack}_{args.loss_mode}_eps{args.epsilon}.csv"
+        )
         df.to_csv(output_csv, index=False)
-        print(f"\n[SUCCESSO] Analisi di similarità black-box completata. Report salvato in: {output_csv}")
-        print(f"[INFO] Immagini delle evasioni riuscite salvate in: {success_img_dir}")
+        print(f"\n[SUCCESSO] Report in: {output_csv}")
 
-        print("\n" + "="*85)
-        print(f" TABELLA RIASSUNTIVA BLACK-BOX ({args.model.upper()})")
-        print("="*85)
+        print("\n" + "=" * 85)
+        print(f" TABELLA RIASSUNTIVA BLACK-BOX ({args.model.upper()}, {args.loss_mode.upper()})")
+        print("=" * 85)
         print(df.to_string(index=False))
-        
-        print("\n" + "="*85)
-        print(" STATISTICHE DESCRITTIVE DELLE SIMILARITÀ BLACK-BOX & QUERY EFFICIENCY")
-        print("="*85)
-        print(df[["queries_used", "sim_orig_vs_anonymized", "sim_orig_vs_adversarial_pipe"]].describe().to_string())
-        print("="*85)
+
+        print("\n" + "=" * 85)
+        print(" STATISTICHE DESCRITTIVE")
+        print("=" * 85)
+        print(df[["delta_linf", "queries_used",
+                  "sim_orig_vs_anonymized", "sim_orig_vs_adversarial_pipe"]].describe().to_string())
+        print("=" * 85)
+
+        # Diagnostica: se delta_linf ≈ 0 l'attacco è inerte
+        if df["delta_linf"].mean() < 0.01:
+            print("\n[WARN] delta_linf ≈ 0: l'attacco NON ha modificato l'immagine.")
+        # Diagnostica: se sim_adv ≈ sim_anon l'attacco non ha avuto effetto biometrico
+        diff = (df["sim_orig_vs_adversarial_pipe"] - df["sim_orig_vs_anonymized"]).mean()
+        print(f"\n[DIAG] Δ medio (adv - anon) = {diff:+.4f}")
+        if abs(diff) < 0.05:
+            print("[WARN] Δ ≈ 0: l'attacco non ha spostato la similarità biometrica.")
+            print("       Cause probabili: loss mal segnata, region sbagliata, o attacco inerte.")
+
 
 if __name__ == "__main__":
     evaluator = BlackBoxEvaluator()
