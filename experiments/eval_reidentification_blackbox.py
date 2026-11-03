@@ -1,3 +1,4 @@
+%%writefile experiments/eval_reidentification_blackbox.py
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -57,14 +58,18 @@ class BlackBoxEvaluator(BaseEvaluator):
             return super().setup_target(model_name)
 
     def get_attack_instance(self, attack_name, detector_wrapper, target, anonymizer, epsilon,
-                            loss_mode="evasion", region_mode="face"):
+                            loss_mode="evasion", region_mode="face", n_queries=None):
         attack_name = attack_name.lower()
+
+        # n_queries adattivo: DP2 è ~0.5s/query, CIAGAN è ~0.05s/query
+        if n_queries is None:
+            n_queries = 100 if loss_mode == "leakage" else 500
 
         if attack_name == "square":
             return SquareAttack(
                 detector_wrapper=detector_wrapper,
                 device=self.device,
-                n_queries=1000,
+                n_queries=n_queries,
                 loss_mode=loss_mode,
                 region_mode=region_mode,
                 anonymizer_fn=anonymizer,
@@ -72,7 +77,7 @@ class BlackBoxEvaluator(BaseEvaluator):
                 compute_sim_fn=self.compute_cosine_similarity,
             )
         elif attack_name == "simba":
-            return SimBA(detector_wrapper=detector_wrapper, device=self.device, n_queries=1000)
+            return SimBA(detector_wrapper=detector_wrapper, device=self.device, n_queries=n_queries)
         elif attack_name == "boundary":
             return BoundaryAttack(detector_wrapper=detector_wrapper, device=self.device, max_iter=200)
         elif attack_name == "advpatch":
@@ -149,6 +154,26 @@ class BlackBoxEvaluator(BaseEvaluator):
             t = t.unsqueeze(0).repeat(3, 1, 1)
         return t
 
+    def _check_stochasticity(self, anonymizer, img_uint8, n_trials=3):
+        """Verifica se la pipeline è stocastica (utile prima di attacchi leakage)."""
+        sims = []
+        try:
+            emb_orig = self.extract_embedding(img_uint8.float().cpu())
+            if emb_orig is None:
+                return None, None
+            for _ in range(n_trials):
+                out = anonymizer(img_uint8)
+                out_t = self._ensure_chw_tensor(out)
+                emb = self.extract_embedding(out_t)
+                if emb is not None:
+                    sims.append(self.compute_cosine_similarity(emb_orig, emb))
+            if not sims:
+                return None, None
+            return float(np.mean(sims)), float(np.std(sims))
+        except Exception as e:
+            print(f"[WARN] stochasticity check failed: {e}")
+            return None, None
+
     def run_blackbox(self):
         parser = argparse.ArgumentParser(description="Valutazione Identity Leakage & Re-identification (Black-Box Mode)")
         parser.add_argument("--attack", type=str, default="square",
@@ -159,8 +184,9 @@ class BlackBoxEvaluator(BaseEvaluator):
         parser.add_argument("--epsilon", type=float, default=32.0)
         parser.add_argument("--num_samples", type=int, default=20)
         parser.add_argument("--loss_mode", type=str, default="evasion",
-                            choices=["evasion", "leakage"],
-                            help="Obiettivo dell'attacco (solo per Square/SimBA)")
+                            choices=["evasion", "leakage"])
+        parser.add_argument("--n_queries", type=int, default=None,
+                            help="Numero di query (default: 100 leakage / 500 evasion)")
         args = parser.parse_args()
 
         print(f"\n[INFO] Avvio Identity Leakage Analysis & Re-identification (BLACK-BOX MODE)")
@@ -171,9 +197,29 @@ class BlackBoxEvaluator(BaseEvaluator):
 
         target, anonymizer, detector_wrapper, dsfd_net, mean_tensor = self.setup_target(args.model)
 
-        # Region mode: ring per CIAGAN (azzera il volto), face per DP2
         region_mode = "ring" if args.model == "ciagan" else "face"
         print(f" -> Region mode: {region_mode.upper()}")
+
+        # PRE-CHECK: stocasticità della pipeline (solo per leakage)
+        if args.loss_mode == "leakage":
+            ds_probe = LFWDataset(root_dir="/kaggle/input/datasets/jessicali9530/lfw-dataset/lfw-deepfunneled/lfw-deepfunneled")
+            probe_img = ds_probe[0][0]
+            if probe_img.max() <= 1.0:
+                probe_img = probe_img * 255.0
+            probe_uint8 = probe_img.byte().to(self.device)
+            print("\n[PRE-CHECK] Verifica stocasticità della pipeline (3 chiamate)...")
+            mean_sim, std_sim = self._check_stochasticity(anonymizer, probe_uint8, n_trials=3)
+            if mean_sim is not None:
+                print(f"  sim media: {mean_sim:.4f}, std: {std_sim:.4f}")
+                if std_sim > 0.05:
+                    print(f"  [WARN] Pipeline STOCASTICA (std={std_sim:.4f}). "
+                          f"Il rumore della GAN domina il segnale biometrico.")
+                    print(f"         Un attacco leakage potrebbe essere inefficace "
+                          f"indipendentemente dalla logica.")
+                else:
+                    print(f"  [OK] Pipeline deterministica/stable (std={std_sim:.4f}).")
+            else:
+                print("  [WARN] Impossibile misurare la stocasticità.")
 
         attack = self.get_attack_instance(
             args.attack,
@@ -183,7 +229,9 @@ class BlackBoxEvaluator(BaseEvaluator):
             epsilon=args.epsilon,
             loss_mode=args.loss_mode,
             region_mode=region_mode,
+            n_queries=args.n_queries,
         )
+        print(f" -> n_queries: {getattr(attack, 'n_queries', 'N/A')}")
 
         dataset = LFWDataset(root_dir="/kaggle/input/datasets/jessicali9530/lfw-dataset/lfw-deepfunneled/lfw-deepfunneled")
 
@@ -204,15 +252,11 @@ class BlackBoxEvaluator(BaseEvaluator):
             if img_tensor.ndim == 3:
                 img_tensor = img_tensor.unsqueeze(0)
 
-            if hasattr(attack, "perturb"):
-                try:
-                    img_adv, success, queries = attack.perturb(img_tensor[0], epsilon=args.epsilon)
-                except TypeError:
-                    img_adv, success, queries = attack.perturb(img_tensor[0])
-            else:
-                raise AttributeError("L'attacco non ha .perturb().")
+            try:
+                img_adv, success, queries = attack.perturb(img_tensor[0], epsilon=args.epsilon)
+            except TypeError:
+                img_adv, success, queries = attack.perturb(img_tensor[0])
 
-            # Delta linf dell'attacco (verifica che abbia agito)
             delta_linf = (img_adv.float() - img_tensor[0].float()).abs().max().item()
 
             with torch.no_grad():
@@ -255,13 +299,13 @@ class BlackBoxEvaluator(BaseEvaluator):
                 adv_np = img_adv_chw.permute(1, 2, 0).numpy().astype(np.uint8)
 
                 axes[0].imshow(orig_np)
-                axes[0].set_title(f"Volto Originale (ID: {idx})")
+                axes[0].set_title(f"Originale (ID: {idx})")
                 axes[0].axis('off')
                 axes[1].imshow(anon_np)
-                axes[1].set_title(f"Target (Baseline) Sim: {sim_orig_anon:.4f}")
+                axes[1].set_title(f"Baseline Sim: {sim_orig_anon:.4f}")
                 axes[1].axis('off')
                 axes[2].imshow(adv_np)
-                axes[2].set_title(f"Target (Adversarial) Sim: {sim_orig_adv:.4f}")
+                axes[2].set_title(f"Adversarial Sim: {sim_orig_adv:.4f}")
                 axes[2].axis('off')
 
                 plt.tight_layout()
@@ -291,26 +335,24 @@ class BlackBoxEvaluator(BaseEvaluator):
         print(f"\n[SUCCESSO] Report in: {output_csv}")
 
         print("\n" + "=" * 85)
-        print(f" TABELLA RIASSUNTIVA BLACK-BOX ({args.model.upper()}, {args.loss_mode.upper()})")
+        print(f" TABELLA RIASSUNTIVA ({args.model.upper()}, {args.loss_mode.upper()})")
         print("=" * 85)
         print(df.to_string(index=False))
 
         print("\n" + "=" * 85)
-        print(" STATISTICHE DESCRITTIVE")
+        print(" STATISTICHE")
         print("=" * 85)
         print(df[["delta_linf", "queries_used",
                   "sim_orig_vs_anonymized", "sim_orig_vs_adversarial_pipe"]].describe().to_string())
         print("=" * 85)
 
-        # Diagnostica: se delta_linf ≈ 0 l'attacco è inerte
         if df["delta_linf"].mean() < 0.01:
             print("\n[WARN] delta_linf ≈ 0: l'attacco NON ha modificato l'immagine.")
-        # Diagnostica: se sim_adv ≈ sim_anon l'attacco non ha avuto effetto biometrico
         diff = (df["sim_orig_vs_adversarial_pipe"] - df["sim_orig_vs_anonymized"]).mean()
         print(f"\n[DIAG] Δ medio (adv - anon) = {diff:+.4f}")
         if abs(diff) < 0.05:
             print("[WARN] Δ ≈ 0: l'attacco non ha spostato la similarità biometrica.")
-            print("       Cause probabili: loss mal segnata, region sbagliata, o attacco inerte.")
+            print("       Cause: loss mal segnata, region sbagliata, pipeline stocastica, o attacco inerte.")
 
 
 if __name__ == "__main__":
