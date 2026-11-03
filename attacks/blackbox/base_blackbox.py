@@ -61,32 +61,70 @@ class BaseBlackBoxAttack(ABC):
         return output
 
     def _parse_detections(self, dets):
-        """Normalizza in lista di righe [x1, y1, x2, y2, conf].
+        """Normalizza output detector in lista di righe [x1, y1, x2, y2, conf].
 
-        Gestisce: None, [], [None], [tensor(N,5)], [tensor(5,)].
+        Gestisce:
+          - None, [], [None]                          → lista vuota
+          - [FaceDetection(boxes=tensor)] (DP2)       → righe da .boxes
+          - [tensor(N,5)] (Dlib wrapper)              → righe dirette
+          - np.ndarray (N,5), tensor (N,5)            → righe dirette
         """
         if dets is None:
             return []
 
+        # Caso lista/tupla (Dlib wrapper: [tensor(N,5)] o [None]; DP2: [FaceDetection])
         if isinstance(dets, (list, tuple)):
             if len(dets) == 0:
                 return []
             first = dets[0]
             if first is None:
                 return []
+
+            # FIX: DP2 restituisce FaceDetection con attributo .boxes (tensor N,5)
+            if hasattr(first, "boxes"):
+                boxes = first.boxes
+                if isinstance(boxes, torch.Tensor):
+                    b = boxes.detach().cpu().numpy()
+                elif isinstance(boxes, np.ndarray):
+                    b = boxes
+                else:
+                    b = np.array(boxes)
+                if b.size == 0:
+                    return []
+                if b.ndim == 1:
+                    return [b.astype(float).tolist()]
+                return b.astype(float).tolist()
+
             if isinstance(first, torch.Tensor):
                 if first.dim() == 2:
                     return first.detach().cpu().numpy().astype(float).tolist()
                 if first.dim() == 1:
                     return [first.detach().cpu().numpy().astype(float).tolist()]
+
             if isinstance(first, np.ndarray):
                 if first.ndim == 2:
                     return first.astype(float).tolist()
                 if first.ndim == 1:
                     return [first.astype(float).tolist()]
+
+            # Altre liste di righe
             out = []
             for item in dets:
                 if item is None:
+                    continue
+                if hasattr(item, "boxes"):
+                    boxes = item.boxes
+                    if isinstance(boxes, torch.Tensor):
+                        b = boxes.detach().cpu().numpy()
+                    elif isinstance(boxes, np.ndarray):
+                        b = boxes
+                    else:
+                        b = np.array(boxes)
+                    if b.size > 0:
+                        if b.ndim == 1:
+                            out.append(b.astype(float).tolist())
+                        else:
+                            out.extend(b.astype(float).tolist())
                     continue
                 if isinstance(item, (list, tuple, np.ndarray)):
                     out.append(list(map(float, item)))
@@ -94,6 +132,7 @@ class BaseBlackBoxAttack(ABC):
                     out.append(item.detach().cpu().numpy().astype(float).tolist())
             return out
 
+        # Tensor/np array diretto
         if isinstance(dets, torch.Tensor):
             arr = dets.detach().cpu().numpy()
             if arr.size == 0:
@@ -113,6 +152,7 @@ class BaseBlackBoxAttack(ABC):
                 return [dets.astype(float).tolist()]
             return []
 
+        # Fallback: attributi comuni su un singolo oggetto
         for attr in ["boxes", "detections", "data", "dets", "_boxes", "pred_boxes"]:
             if hasattr(dets, attr):
                 val = getattr(dets, attr)
@@ -148,11 +188,6 @@ class BaseBlackBoxAttack(ABC):
         return [int(h * 0.2), int(w * 0.2), int(h * 0.8), int(w * 0.8)]
 
     def _get_perturbation_mask(self, img_tensor):
-        """Maschera (1, H, W) con 1.0 dove si può perturbare.
-
-        - "face" → rettangolo del volto (DeepPrivacy2)
-        - "ring" → anello attorno al volto, escluso il volto (CIAGAN)
-        """
         _, _, h, w = img_tensor.shape if img_tensor.ndim == 4 else (
             1, img_tensor.shape[0], img_tensor.shape[1], img_tensor.shape[2])
         ymin, xmin, ymax, xmax = self._get_face_roi(img_tensor)
@@ -174,7 +209,6 @@ class BaseBlackBoxAttack(ABC):
             mask[0] = (outer - face_box).clamp(0.0, 1.0)
         else:
             raise ValueError(f"region_mode non valido: {self.region_mode}")
-
         return mask
 
     def _get_loss(self, img_tensor, emb_orig=None):
