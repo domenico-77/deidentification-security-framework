@@ -60,7 +60,6 @@ class BlackBoxEvaluator(BaseEvaluator):
                             loss_mode="evasion", region_mode="face", n_queries=None):
         attack_name = attack_name.lower()
 
-        # n_queries adattivo: DP2 è ~0.5s/query, CIAGAN è ~0.05s/query
         if n_queries is None:
             n_queries = 100 if loss_mode == "leakage" else 500
 
@@ -82,15 +81,19 @@ class BlackBoxEvaluator(BaseEvaluator):
         elif attack_name == "advpatch":
             return AdversarialPatchAttack(detector_wrapper=detector_wrapper, device=self.device)
         elif attack_name == "spsa":
+            # FIX: --n_queries controlla n_iters (n_queries = n_iters * 2)
+            n_iters = max(50, (n_queries or 200) // 2)
             return SPSAAttack(
                 detector_wrapper=detector_wrapper,
                 anonymizer_fn=anonymizer,
                 extract_emb_fn=self.extract_embedding,
                 compute_sim_fn=self.compute_cosine_similarity,
                 device=self.device,
-                n_iters=50,
-                lr=1.0,
-                delta=2.0,
+                n_iters=n_iters,
+                lr=2.0,
+                delta=4.0,
+                region_mode=region_mode,
+                loss_mode=loss_mode,
             )
         elif attack_name == "landmark_spoofing":
             return LandmarkSpoofingAttack(
@@ -154,7 +157,6 @@ class BlackBoxEvaluator(BaseEvaluator):
         return t
 
     def _check_stochasticity(self, anonymizer, img_uint8, n_trials=3):
-        """Verifica se la pipeline è stocastica (utile prima di attacchi leakage)."""
         sims = []
         try:
             emb_orig = self.extract_embedding(img_uint8.float().cpu())
@@ -184,8 +186,7 @@ class BlackBoxEvaluator(BaseEvaluator):
         parser.add_argument("--num_samples", type=int, default=20)
         parser.add_argument("--loss_mode", type=str, default="evasion",
                             choices=["evasion", "leakage"])
-        parser.add_argument("--n_queries", type=int, default=None,
-                            help="Numero di query (default: 100 leakage / 500 evasion)")
+        parser.add_argument("--n_queries", type=int, default=None)
         args = parser.parse_args()
 
         print(f"\n[INFO] Avvio Identity Leakage Analysis & Re-identification (BLACK-BOX MODE)")
@@ -199,7 +200,7 @@ class BlackBoxEvaluator(BaseEvaluator):
         region_mode = "ring" if args.model == "ciagan" else "face"
         print(f" -> Region mode: {region_mode.upper()}")
 
-        # PRE-CHECK: stocasticità della pipeline (solo per leakage)
+        # PRE-CHECK: stocasticità della pipeline (solo leakage)
         if args.loss_mode == "leakage":
             ds_probe = LFWDataset(root_dir="/kaggle/input/datasets/jessicali9530/lfw-dataset/lfw-deepfunneled/lfw-deepfunneled")
             probe_img = ds_probe[0][0]
@@ -210,11 +211,15 @@ class BlackBoxEvaluator(BaseEvaluator):
             mean_sim, std_sim = self._check_stochasticity(anonymizer, probe_uint8, n_trials=3)
             if mean_sim is not None:
                 print(f"  sim media: {mean_sim:.4f}, std: {std_sim:.4f}")
+                # FIX: soglie corrette
                 if std_sim > 0.05:
-                    print(f"  [WARN] Pipeline STOCASTICA (std={std_sim:.4f}). "
-                          f"Il rumore della GAN domina il segnale biometrico.")
-                    print(f"         Un attacco leakage potrebbe essere inefficace "
-                          f"indipendentemente dalla logica.")
+                    print(f"  [ERROR] Pipeline MOLTO stocastica (std={std_sim:.4f}). "
+                          f"Se il rumore della GAN è > 0.05, il leakage è impossibile.")
+                    print(f"         Qualsiasi Δ < {std_sim*2:.3f} è indistinguibile dal rumore.")
+                elif std_sim > 0.03:
+                    print(f"  [WARN] Pipeline stocastica (std={std_sim:.4f}). "
+                          f"Un attacco leakage potrebbe essere inefficace.")
+                    print(f"         Soglia di rilevabilità: |Δ| > {std_sim*2:.3f}.")
                 else:
                     print(f"  [OK] Pipeline deterministica/stable (std={std_sim:.4f}).")
             else:
@@ -231,6 +236,8 @@ class BlackBoxEvaluator(BaseEvaluator):
             n_queries=args.n_queries,
         )
         print(f" -> n_queries: {getattr(attack, 'n_queries', 'N/A')}")
+        if hasattr(attack, "n_iters"):
+            print(f" -> n_iters: {attack.n_iters}")
 
         dataset = LFWDataset(root_dir="/kaggle/input/datasets/jessicali9530/lfw-dataset/lfw-deepfunneled/lfw-deepfunneled")
 
@@ -297,15 +304,9 @@ class BlackBoxEvaluator(BaseEvaluator):
                 anon_np = img_anon_chw.permute(1, 2, 0).numpy().astype(np.uint8)
                 adv_np = img_adv_chw.permute(1, 2, 0).numpy().astype(np.uint8)
 
-                axes[0].imshow(orig_np)
-                axes[0].set_title(f"Originale (ID: {idx})")
-                axes[0].axis('off')
-                axes[1].imshow(anon_np)
-                axes[1].set_title(f"Baseline Sim: {sim_orig_anon:.4f}")
-                axes[1].axis('off')
-                axes[2].imshow(adv_np)
-                axes[2].set_title(f"Adversarial Sim: {sim_orig_adv:.4f}")
-                axes[2].axis('off')
+                axes[0].imshow(orig_np); axes[0].set_title(f"Originale (ID: {idx})"); axes[0].axis('off')
+                axes[1].imshow(anon_np); axes[1].set_title(f"Baseline Sim: {sim_orig_anon:.4f}"); axes[1].axis('off')
+                axes[2].imshow(adv_np); axes[2].set_title(f"Adversarial Sim: {sim_orig_adv:.4f}"); axes[2].axis('off')
 
                 plt.tight_layout()
                 fname = os.path.join(success_img_dir, f"sample_{idx}_sim_{sim_orig_adv:.2f}.png")
@@ -351,7 +352,6 @@ class BlackBoxEvaluator(BaseEvaluator):
         print(f"\n[DIAG] Δ medio (adv - anon) = {diff:+.4f}")
         if abs(diff) < 0.05:
             print("[WARN] Δ ≈ 0: l'attacco non ha spostato la similarità biometrica.")
-            print("       Cause: loss mal segnata, region sbagliata, pipeline stocastica, o attacco inerte.")
 
 
 if __name__ == "__main__":
