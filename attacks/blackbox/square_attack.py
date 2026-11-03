@@ -23,7 +23,6 @@ class SquareAttack(BaseBlackBoxAttack):
         x_orig = img_tensor.clone().detach()
         x_best = x_orig.clone()
 
-        # Reset cache embedding a ogni immagine
         self._reset_embedding_cache()
 
         emb_orig = None
