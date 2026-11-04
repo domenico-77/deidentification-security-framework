@@ -3,6 +3,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import os
 import argparse
+from math import comb
 import torch
 import numpy as np
 import pandas as pd
@@ -93,7 +94,6 @@ class BlackBoxEvaluator(BaseEvaluator):
         elif attack_name == "advpatch":
             return AdversarialPatchAttack(detector_wrapper=detector_wrapper, device=self.device)
         elif attack_name == "spsa":
-            # n_iters = n_queries / 2 (2 query per iterazione: +c e -c)
             n_iters = max(50, (n_queries or 200) // 2)
             return SPSAAttack(
                 detector_wrapper=detector_wrapper,
@@ -201,8 +201,16 @@ class BlackBoxEvaluator(BaseEvaluator):
         parser.add_argument("--n_queries", type=int, default=None,
                             help="Query totali (default: 100 leakage / 500 evasion)")
         parser.add_argument("--patch_size", type=int, default=4,
-                            help="Dimensione patch SimBA (1=classico, 4=default, 8=aggressiva)")
+                            help="Dimensione patch SimBA (1=classico, 4=default, 8=aggressiva). "
+                                 "Ignorato dagli altri attacchi.")
         args = parser.parse_args()
+
+        # FIX: warning esplicito se --patch_size è passato con attacchi che non lo usano
+        attacks_without_patch = {"square", "boundary", "advpatch", "spsa",
+                                 "landmark_spoofing", "gfsa"}
+        if args.attack.lower() in attacks_without_patch and args.patch_size != 4:
+            print(f"[INFO] --patch_size={args.patch_size} ignorato: "
+                  f"l'attacco '{args.attack}' non usa patch. Il parametro è valido solo per SimBA.")
 
         print(f"\n[INFO] Avvio Identity Leakage Analysis & Re-identification (BLACK-BOX MODE)")
         print(f" -> Attacco: {args.attack.upper()} (Epsilon: {args.epsilon})")
@@ -215,7 +223,8 @@ class BlackBoxEvaluator(BaseEvaluator):
         region_mode = "ring" if args.model == "ciagan" else "face"
         print(f" -> Region mode: {region_mode.upper()}")
 
-        # PRE-CHECK stocasticità (solo leakage)
+        # Pre-check stocasticità (solo leakage)
+        std_sim = None
         if args.loss_mode == "leakage":
             ds_probe = LFWDataset(root_dir="/kaggle/input/datasets/jessicali9530/lfw-dataset/lfw-deepfunneled/lfw-deepfunneled")
             probe_img = ds_probe[0][0]
@@ -299,6 +308,19 @@ class BlackBoxEvaluator(BaseEvaluator):
                 raw_adv = anonymizer(img_adv_uint8)
                 img_pipeline_adv = raw_adv
 
+            # FIX PIXEL-LEVEL: misura se la pipeline ha restituito l'originale (bypass)
+            with torch.no_grad():
+                img_orig_f = img_single.detach().cpu().float()
+                img_pipe_adv_chw = self._ensure_chw_tensor(img_pipeline_adv).float()
+                if img_pipe_adv_chw.max() <= 1.0:
+                    img_pipe_adv_chw = img_pipe_adv_chw * 255.0
+
+                # Differenza media input vs pipeline output sull'adversarial
+                pixel_diff_pipeline = (img_orig_f - img_pipe_adv_chw).abs().mean().item()
+
+                # Bypass detection: se pixel_diff ≈ 0 → pipeline ha restituito l'originale
+                pipeline_bypassed = bool(pixel_diff_pipeline < 5.0)
+
             sim_orig_anon = 0.0
             sim_orig_adv = 0.0
 
@@ -315,20 +337,31 @@ class BlackBoxEvaluator(BaseEvaluator):
                 if emb_orig is not None and emb_adv_pipe is not None:
                     sim_orig_adv = self.compute_cosine_similarity(emb_orig, emb_adv_pipe)
 
-            if success and sim_orig_adv >= 0.5:
-                fig, axes = plt.subplots(1, 3, figsize=(15, 5))
-                orig_np = img_single.detach().cpu().permute(1, 2, 0).numpy().astype(np.uint8)
-                anon_np = img_anon_chw.permute(1, 2, 0).numpy().astype(np.uint8)
-                adv_np = img_adv_chw.permute(1, 2, 0).numpy().astype(np.uint8)
+            # Salvataggio automatico immagine "successo" (bypass reale o alta sim)
+            if pipeline_bypassed or (success and sim_orig_adv >= 0.5):
+                try:
+                    fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+                    orig_np = img_single.detach().cpu().permute(1, 2, 0).numpy().astype(np.uint8)
+                    anon_np = img_anon_chw.permute(1, 2, 0).numpy().astype(np.uint8)
+                    adv_np = img_adv_chw.permute(1, 2, 0).numpy().astype(np.uint8)
 
-                axes[0].imshow(orig_np); axes[0].set_title(f"Originale (ID: {idx})"); axes[0].axis('off')
-                axes[1].imshow(anon_np); axes[1].set_title(f"Baseline Sim: {sim_orig_anon:.4f}"); axes[1].axis('off')
-                axes[2].imshow(adv_np); axes[2].set_title(f"Adversarial Sim: {sim_orig_adv:.4f}"); axes[2].axis('off')
+                    axes[0].imshow(orig_np); axes[0].set_title(f"Originale (ID: {idx})"); axes[0].axis('off')
+                    axes[1].imshow(anon_np); axes[1].set_title(f"Baseline Sim: {sim_orig_anon:.4f}"); axes[1].axis('off')
+                    axes[2].imshow(adv_np)
+                    axes[2].set_title(f"Adv Sim: {sim_orig_adv:.4f} | "
+                                      f"bypassed={pipeline_bypassed} | "
+                                      f"pix_diff={pixel_diff_pipeline:.1f}")
+                    axes[2].axis('off')
 
-                plt.tight_layout()
-                fname = os.path.join(success_img_dir, f"sample_{idx}_sim_{sim_orig_adv:.2f}.png")
-                plt.savefig(fname, dpi=150)
-                plt.close(fig)
+                    plt.tight_layout()
+                    fname = os.path.join(
+                        success_img_dir,
+                        f"sample_{idx}_bypass{int(pipeline_bypassed)}_sim{sim_orig_adv:.2f}.png"
+                    )
+                    plt.savefig(fname, dpi=150)
+                    plt.close(fig)
+                except Exception as e:
+                    print(f"[WARN] plot sample {idx} failed: {e}")
 
             results.append({
                 "sample_id": idx,
@@ -338,6 +371,8 @@ class BlackBoxEvaluator(BaseEvaluator):
                 "epsilon": args.epsilon,
                 "delta_linf": round(delta_linf, 4),
                 "detector_evaded": success,
+                "pipeline_bypassed": pipeline_bypassed,
+                "pixel_diff_pipeline": round(pixel_diff_pipeline, 2),
                 "queries_used": queries,
                 "sim_orig_vs_anonymized": round(sim_orig_anon, 4),
                 "sim_orig_vs_adversarial_pipe": round(sim_orig_adv, 4),
@@ -351,24 +386,73 @@ class BlackBoxEvaluator(BaseEvaluator):
         df.to_csv(output_csv, index=False)
         print(f"\n[SUCCESSO] Report in: {output_csv}")
 
-        print("\n" + "=" * 85)
+        print("\n" + "=" * 100)
         print(f" TABELLA RIASSUNTIVA ({args.model.upper()}, {args.loss_mode.upper()})")
-        print("=" * 85)
+        print("=" * 100)
         print(df.to_string(index=False))
 
-        print("\n" + "=" * 85)
+        print("\n" + "=" * 100)
         print(" STATISTICHE")
-        print("=" * 85)
-        print(df[["delta_linf", "queries_used",
-                  "sim_orig_vs_anonymized", "sim_orig_vs_adversarial_pipe"]].describe().to_string())
-        print("=" * 85)
+        print("=" * 100)
+        stats_cols = ["delta_linf", "pixel_diff_pipeline", "queries_used",
+                      "sim_orig_vs_anonymized", "sim_orig_vs_adversarial_pipe"]
+        print(df[stats_cols].describe().to_string())
+        print("=" * 100)
 
+        # ============================================================
+        # DIAGNOSTIC TARGET-AWARE
+        # ============================================================
         if df["delta_linf"].mean() < 0.01:
             print("\n[WARN] delta_linf ≈ 0: l'attacco NON ha modificato l'immagine.")
-        diff = (df["sim_orig_vs_adversarial_pipe"] - df["sim_orig_vs_anonymized"]).mean()
-        print(f"\n[DIAG] Δ medio (adv - anon) = {diff:+.4f}")
-        if abs(diff) < 0.05:
-            print("[WARN] Δ ≈ 0: l'attacco non ha spostato la similarità biometrica.")
+
+        # Conteggio bypass reali
+        n_bypassed = int(df["pipeline_bypassed"].sum())
+        n_tot = len(df)
+        print(f"\n[DIAG] Pipeline bypass: {n_bypassed}/{n_tot} "
+              f"({100*n_bypassed/max(n_tot,1):.1f}%)")
+
+        if args.loss_mode == "leakage":
+            diff = (df["sim_orig_vs_adversarial_pipe"] - df["sim_orig_vs_anonymized"]).mean()
+            diff_med = (df["sim_orig_vs_adversarial_pipe"] - df["sim_orig_vs_anonymized"]).median()
+            n_pos = int((df["sim_orig_vs_adversarial_pipe"] >
+                         df["sim_orig_vs_anonymized"]).sum())
+
+            noise_floor = 2.0 * std_sim if std_sim is not None else 0.05
+            p_value = sum(comb(n_tot, k) for k in range(n_pos, n_tot + 1)) / (2 ** n_tot)
+
+            print(f"[DIAG] Δ medio: {diff:+.4f} | Δ mediano: {diff_med:+.4f}")
+            print(f"[DIAG] Sign test: {n_pos}/{n_tot} positivi, p = {p_value:.4f}")
+            print(f"[DIAG] Noise floor (2×std): {noise_floor:.4f}")
+
+            if diff > noise_floor and p_value < 0.05:
+                print(f"[OK] ATTACCO EFFICACE: Δ={diff:+.4f} > soglia {noise_floor:.4f}, "
+                      f"segno statisticamente significativo (p={p_value:.4f})")
+            elif p_value < 0.05:
+                print(f"[INFO] Segnale statisticamente significativo ma Δ={diff:+.4f} "
+                      f"< soglia rumore {noise_floor:.4f}. Attacco reale ma debole.")
+            else:
+                print(f"[WARN] Δ={diff:+.4f} non significativo (p={p_value:.4f}, "
+                      f"soglia {noise_floor:.4f}).")
+
+            if n_bypassed > 0:
+                print(f"\n[!] ATTENZIONE: {n_bypassed}/{n_tot} campioni hanno BYPASSATO la pipeline.")
+                print(f"    In questi casi, la sim_orig_vs_adv potrebbe essere 0.0 perché")
+                print(f"    anche InsightFace è stato evaso insieme al detector di CIAGAN.")
+                print(f"    Il bypass è confermato da pixel_diff_pipeline ≈ 0.")
+        else:
+            n_evaded = int(df["detector_evaded"].sum())
+            print(f"\n[DIAG] Evasion detector: {n_evaded}/{n_tot} "
+                  f"({100*n_evaded/max(n_tot,1):.1f}%)")
+            if n_bypassed > 0:
+                print(f"[OK] ATTACCO FUNZIONA: {n_bypassed}/{n_tot} campioni hanno "
+                      f"bypassato la pipeline (volto originale preservato).")
+            elif n_evaded > 0:
+                print(f"[INFO] Detector evade su {n_evaded}/{n_tot} ma la pipeline "
+                      f"anonimizza ancora (verifica il comportamento del target).")
+            else:
+                print(f"[WARN] Nessuna evasione e nessun bypass. Attacco inefficace.")
+
+        print("\n" + "=" * 100)
 
 
 if __name__ == "__main__":
