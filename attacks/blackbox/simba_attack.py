@@ -1,4 +1,3 @@
-%%writefile attacks/blackbox/simba_attack.py
 import torch
 import numpy as np
 from attacks.blackbox.base_blackbox import BaseBlackBoxAttack
