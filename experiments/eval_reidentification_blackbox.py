@@ -61,30 +61,22 @@ class BlackBoxEvaluator(BaseEvaluator):
                             loss_mode="evasion", region_mode="face", n_queries=None,
                             patch_size=4):
         attack_name = attack_name.lower()
-
         if n_queries is None:
             n_queries = 100 if loss_mode == "leakage" else 500
 
         if attack_name == "square":
             return SquareAttack(
-                detector_wrapper=detector_wrapper,
-                device=self.device,
-                n_queries=n_queries,
-                loss_mode=loss_mode,
-                region_mode=region_mode,
+                detector_wrapper=detector_wrapper, device=self.device, n_queries=n_queries,
+                loss_mode=loss_mode, region_mode=region_mode,
                 anonymizer_fn=anonymizer,
                 extract_emb_fn=self.extract_embedding,
                 compute_sim_fn=self.compute_cosine_similarity,
             )
         elif attack_name == "simba":
             return SimBA(
-                detector_wrapper=detector_wrapper,
-                device=self.device,
-                n_queries=n_queries,
-                step_size=2.0,
-                patch_size=patch_size,
-                loss_mode=loss_mode,
-                region_mode=region_mode,
+                detector_wrapper=detector_wrapper, device=self.device, n_queries=n_queries,
+                step_size=2.0, patch_size=patch_size,
+                loss_mode=loss_mode, region_mode=region_mode,
                 anonymizer_fn=anonymizer,
                 extract_emb_fn=self.extract_embedding,
                 compute_sim_fn=self.compute_cosine_similarity,
@@ -96,16 +88,11 @@ class BlackBoxEvaluator(BaseEvaluator):
         elif attack_name == "spsa":
             n_iters = max(50, (n_queries or 200) // 2)
             return SPSAAttack(
-                detector_wrapper=detector_wrapper,
-                anonymizer_fn=anonymizer,
+                detector_wrapper=detector_wrapper, anonymizer_fn=anonymizer,
                 extract_emb_fn=self.extract_embedding,
                 compute_sim_fn=self.compute_cosine_similarity,
-                device=self.device,
-                n_iters=n_iters,
-                lr=2.0,
-                delta=4.0,
-                region_mode=region_mode,
-                loss_mode=loss_mode,
+                device=self.device, n_iters=n_iters, lr=2.0, delta=4.0,
+                region_mode=region_mode, loss_mode=loss_mode,
             )
         elif attack_name == "landmark_spoofing":
             return LandmarkSpoofingAttack(
@@ -198,19 +185,15 @@ class BlackBoxEvaluator(BaseEvaluator):
         parser.add_argument("--num_samples", type=int, default=20)
         parser.add_argument("--loss_mode", type=str, default="evasion",
                             choices=["evasion", "leakage"])
-        parser.add_argument("--n_queries", type=int, default=None,
-                            help="Query totali (default: 100 leakage / 500 evasion)")
-        parser.add_argument("--patch_size", type=int, default=4,
-                            help="Dimensione patch SimBA (1=classico, 4=default, 8=aggressiva). "
-                                 "Ignorato dagli altri attacchi.")
+        parser.add_argument("--n_queries", type=int, default=None)
+        parser.add_argument("--patch_size", type=int, default=4)
         args = parser.parse_args()
 
-        # FIX: warning esplicito se --patch_size è passato con attacchi che non lo usano
         attacks_without_patch = {"square", "boundary", "advpatch", "spsa",
                                  "landmark_spoofing", "gfsa"}
         if args.attack.lower() in attacks_without_patch and args.patch_size != 4:
             print(f"[INFO] --patch_size={args.patch_size} ignorato: "
-                  f"l'attacco '{args.attack}' non usa patch. Il parametro è valido solo per SimBA.")
+                  f"l'attacco '{args.attack}' non usa patch. Valido solo per SimBA.")
 
         print(f"\n[INFO] Avvio Identity Leakage Analysis & Re-identification (BLACK-BOX MODE)")
         print(f" -> Attacco: {args.attack.upper()} (Epsilon: {args.epsilon})")
@@ -223,7 +206,6 @@ class BlackBoxEvaluator(BaseEvaluator):
         region_mode = "ring" if args.model == "ciagan" else "face"
         print(f" -> Region mode: {region_mode.upper()}")
 
-        # Pre-check stocasticità (solo leakage)
         std_sim = None
         if args.loss_mode == "leakage":
             ds_probe = LFWDataset(root_dir="/kaggle/input/datasets/jessicali9530/lfw-dataset/lfw-deepfunneled/lfw-deepfunneled")
@@ -237,27 +219,18 @@ class BlackBoxEvaluator(BaseEvaluator):
                 print(f"  sim media: {mean_sim:.4f}, std: {std_sim:.4f}")
                 if std_sim > 0.05:
                     print(f"  [ERROR] Pipeline MOLTO stocastica (std={std_sim:.4f}). "
-                          f"Se il rumore della GAN è > 0.05, il leakage è impossibile.")
-                    print(f"         Qualsiasi Δ < {std_sim*2:.3f} è indistinguibile dal rumore.")
+                          f"Leakage impossibile oltre Δ={std_sim*2:.3f}.")
                 elif std_sim > 0.03:
                     print(f"  [WARN] Pipeline stocastica (std={std_sim:.4f}). "
-                          f"Un attacco leakage potrebbe essere inefficace.")
-                    print(f"         Soglia di rilevabilità: |Δ| > {std_sim*2:.3f}.")
+                          f"Soglia |Δ| > {std_sim*2:.3f}.")
                 else:
-                    print(f"  [OK] Pipeline deterministica/stable (std={std_sim:.4f}).")
-            else:
-                print("  [WARN] Impossibile misurare la stocasticità.")
+                    print(f"  [OK] Pipeline deterministica (std={std_sim:.4f}).")
 
         attack = self.get_attack_instance(
-            args.attack,
-            detector_wrapper=detector_wrapper,
-            target=target,
-            anonymizer=anonymizer,
-            epsilon=args.epsilon,
-            loss_mode=args.loss_mode,
-            region_mode=region_mode,
-            n_queries=args.n_queries,
-            patch_size=args.patch_size,
+            args.attack, detector_wrapper=detector_wrapper, target=target,
+            anonymizer=anonymizer, epsilon=args.epsilon,
+            loss_mode=args.loss_mode, region_mode=region_mode,
+            n_queries=args.n_queries, patch_size=args.patch_size,
         )
         print(f" -> n_queries: {getattr(attack, 'n_queries', 'N/A')}")
         if hasattr(attack, "n_iters"):
@@ -308,17 +281,18 @@ class BlackBoxEvaluator(BaseEvaluator):
                 raw_adv = anonymizer(img_adv_uint8)
                 img_pipeline_adv = raw_adv
 
-            # FIX PIXEL-LEVEL: misura se la pipeline ha restituito l'originale (bypass)
+            # ============================================================
+            # FIX PIXEL-LEVEL: confronta adv (INPUT) vs pipeline(adv) (OUTPUT)
+            # ============================================================
             with torch.no_grad():
-                img_orig_f = img_single.detach().cpu().float()
+                img_adv_f = img_adv_uint8.detach().cpu().float()
                 img_pipe_adv_chw = self._ensure_chw_tensor(img_pipeline_adv).float()
                 if img_pipe_adv_chw.max() <= 1.0:
                     img_pipe_adv_chw = img_pipe_adv_chw * 255.0
 
-                # Differenza media input vs pipeline output sull'adversarial
-                pixel_diff_pipeline = (img_orig_f - img_pipe_adv_chw).abs().mean().item()
-
-                # Bypass detection: se pixel_diff ≈ 0 → pipeline ha restituito l'originale
+                # Se pipeline bypassa → restituisce adv invariato → pixel_diff ≈ 0
+                # Se pipeline anonimizza → restituisce volto sintetico → pixel_diff > 15
+                pixel_diff_pipeline = (img_adv_f - img_pipe_adv_chw).abs().mean().item()
                 pipeline_bypassed = bool(pixel_diff_pipeline < 5.0)
 
             sim_orig_anon = 0.0
@@ -337,7 +311,6 @@ class BlackBoxEvaluator(BaseEvaluator):
                 if emb_orig is not None and emb_adv_pipe is not None:
                     sim_orig_adv = self.compute_cosine_similarity(emb_orig, emb_adv_pipe)
 
-            # Salvataggio automatico immagine "successo" (bypass reale o alta sim)
             if pipeline_bypassed or (success and sim_orig_adv >= 0.5):
                 try:
                     fig, axes = plt.subplots(1, 3, figsize=(15, 5))
@@ -354,10 +327,8 @@ class BlackBoxEvaluator(BaseEvaluator):
                     axes[2].axis('off')
 
                     plt.tight_layout()
-                    fname = os.path.join(
-                        success_img_dir,
-                        f"sample_{idx}_bypass{int(pipeline_bypassed)}_sim{sim_orig_adv:.2f}.png"
-                    )
+                    fname = os.path.join(success_img_dir,
+                                         f"sample_{idx}_bypass{int(pipeline_bypassed)}_sim{sim_orig_adv:.2f}.png")
                     plt.savefig(fname, dpi=150)
                     plt.close(fig)
                 except Exception as e:
@@ -405,7 +376,6 @@ class BlackBoxEvaluator(BaseEvaluator):
         if df["delta_linf"].mean() < 0.01:
             print("\n[WARN] delta_linf ≈ 0: l'attacco NON ha modificato l'immagine.")
 
-        # Conteggio bypass reali
         n_bypassed = int(df["pipeline_bypassed"].sum())
         n_tot = len(df)
         print(f"\n[DIAG] Pipeline bypass: {n_bypassed}/{n_tot} "
@@ -414,8 +384,7 @@ class BlackBoxEvaluator(BaseEvaluator):
         if args.loss_mode == "leakage":
             diff = (df["sim_orig_vs_adversarial_pipe"] - df["sim_orig_vs_anonymized"]).mean()
             diff_med = (df["sim_orig_vs_adversarial_pipe"] - df["sim_orig_vs_anonymized"]).median()
-            n_pos = int((df["sim_orig_vs_adversarial_pipe"] >
-                         df["sim_orig_vs_anonymized"]).sum())
+            n_pos = int((df["sim_orig_vs_adversarial_pipe"] > df["sim_orig_vs_anonymized"]).sum())
 
             noise_floor = 2.0 * std_sim if std_sim is not None else 0.05
             p_value = sum(comb(n_tot, k) for k in range(n_pos, n_tot + 1)) / (2 ** n_tot)
@@ -425,32 +394,26 @@ class BlackBoxEvaluator(BaseEvaluator):
             print(f"[DIAG] Noise floor (2×std): {noise_floor:.4f}")
 
             if diff > noise_floor and p_value < 0.05:
-                print(f"[OK] ATTACCO EFFICACE: Δ={diff:+.4f} > soglia {noise_floor:.4f}, "
-                      f"segno statisticamente significativo (p={p_value:.4f})")
+                print(f"[OK] ATTACCO EFFICACE: Δ={diff:+.4f} > soglia {noise_floor:.4f}, p={p_value:.4f}")
             elif p_value < 0.05:
-                print(f"[INFO] Segnale statisticamente significativo ma Δ={diff:+.4f} "
-                      f"< soglia rumore {noise_floor:.4f}. Attacco reale ma debole.")
+                print(f"[INFO] Segnale significativo (p={p_value:.4f}) ma Δ={diff:+.4f} < {noise_floor:.4f}. Debole.")
             else:
-                print(f"[WARN] Δ={diff:+.4f} non significativo (p={p_value:.4f}, "
-                      f"soglia {noise_floor:.4f}).")
+                print(f"[WARN] Δ={diff:+.4f} non significativo (p={p_value:.4f}, soglia {noise_floor:.4f}).")
 
             if n_bypassed > 0:
-                print(f"\n[!] ATTENZIONE: {n_bypassed}/{n_tot} campioni hanno BYPASSATO la pipeline.")
-                print(f"    In questi casi, la sim_orig_vs_adv potrebbe essere 0.0 perché")
-                print(f"    anche InsightFace è stato evaso insieme al detector di CIAGAN.")
-                print(f"    Il bypass è confermato da pixel_diff_pipeline ≈ 0.")
+                print(f"\n[!] {n_bypassed}/{n_tot} campioni BYPASSANO la pipeline.")
+                print(f"    sim_orig_vs_adv può essere 0.0 perché anche InsightFace è evaso.")
+                print(f"    Il bypass è confermato da pixel_diff_pipeline ≈ 0 (adv == pipeline output).")
         else:
             n_evaded = int(df["detector_evaded"].sum())
-            print(f"\n[DIAG] Evasion detector: {n_evaded}/{n_tot} "
-                  f"({100*n_evaded/max(n_tot,1):.1f}%)")
+            print(f"\n[DIAG] Evasion detector: {n_evaded}/{n_tot} ({100*n_evaded/max(n_tot,1):.1f}%)")
             if n_bypassed > 0:
                 print(f"[OK] ATTACCO FUNZIONA: {n_bypassed}/{n_tot} campioni hanno "
                       f"bypassato la pipeline (volto originale preservato).")
             elif n_evaded > 0:
-                print(f"[INFO] Detector evade su {n_evaded}/{n_tot} ma la pipeline "
-                      f"anonimizza ancora (verifica il comportamento del target).")
+                print(f"[INFO] Detector evade su {n_evaded}/{n_tot} ma pipeline anonimizza ancora.")
             else:
-                print(f"[WARN] Nessuna evasione e nessun bypass. Attacco inefficace.")
+                print(f"[WARN] Nessuna evasione e nessun bypass.")
 
         print("\n" + "=" * 100)
 
