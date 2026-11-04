@@ -57,7 +57,8 @@ class BlackBoxEvaluator(BaseEvaluator):
             return super().setup_target(model_name)
 
     def get_attack_instance(self, attack_name, detector_wrapper, target, anonymizer, epsilon,
-                            loss_mode="evasion", region_mode="face", n_queries=None):
+                            loss_mode="evasion", region_mode="face", n_queries=None,
+                            patch_size=4):
         attack_name = attack_name.lower()
 
         if n_queries is None:
@@ -75,13 +76,24 @@ class BlackBoxEvaluator(BaseEvaluator):
                 compute_sim_fn=self.compute_cosine_similarity,
             )
         elif attack_name == "simba":
-            return SimBA(detector_wrapper=detector_wrapper, device=self.device, n_queries=n_queries)
+            return SimBA(
+                detector_wrapper=detector_wrapper,
+                device=self.device,
+                n_queries=n_queries,
+                step_size=2.0,
+                patch_size=patch_size,
+                loss_mode=loss_mode,
+                region_mode=region_mode,
+                anonymizer_fn=anonymizer,
+                extract_emb_fn=self.extract_embedding,
+                compute_sim_fn=self.compute_cosine_similarity,
+            )
         elif attack_name == "boundary":
             return BoundaryAttack(detector_wrapper=detector_wrapper, device=self.device, max_iter=200)
         elif attack_name == "advpatch":
             return AdversarialPatchAttack(detector_wrapper=detector_wrapper, device=self.device)
         elif attack_name == "spsa":
-            # FIX: --n_queries controlla n_iters (n_queries = n_iters * 2)
+            # n_iters = n_queries / 2 (2 query per iterazione: +c e -c)
             n_iters = max(50, (n_queries or 200) // 2)
             return SPSAAttack(
                 detector_wrapper=detector_wrapper,
@@ -186,7 +198,10 @@ class BlackBoxEvaluator(BaseEvaluator):
         parser.add_argument("--num_samples", type=int, default=20)
         parser.add_argument("--loss_mode", type=str, default="evasion",
                             choices=["evasion", "leakage"])
-        parser.add_argument("--n_queries", type=int, default=None)
+        parser.add_argument("--n_queries", type=int, default=None,
+                            help="Query totali (default: 100 leakage / 500 evasion)")
+        parser.add_argument("--patch_size", type=int, default=4,
+                            help="Dimensione patch SimBA (1=classico, 4=default, 8=aggressiva)")
         args = parser.parse_args()
 
         print(f"\n[INFO] Avvio Identity Leakage Analysis & Re-identification (BLACK-BOX MODE)")
@@ -200,7 +215,7 @@ class BlackBoxEvaluator(BaseEvaluator):
         region_mode = "ring" if args.model == "ciagan" else "face"
         print(f" -> Region mode: {region_mode.upper()}")
 
-        # PRE-CHECK: stocasticità della pipeline (solo leakage)
+        # PRE-CHECK stocasticità (solo leakage)
         if args.loss_mode == "leakage":
             ds_probe = LFWDataset(root_dir="/kaggle/input/datasets/jessicali9530/lfw-dataset/lfw-deepfunneled/lfw-deepfunneled")
             probe_img = ds_probe[0][0]
@@ -211,7 +226,6 @@ class BlackBoxEvaluator(BaseEvaluator):
             mean_sim, std_sim = self._check_stochasticity(anonymizer, probe_uint8, n_trials=3)
             if mean_sim is not None:
                 print(f"  sim media: {mean_sim:.4f}, std: {std_sim:.4f}")
-                # FIX: soglie corrette
                 if std_sim > 0.05:
                     print(f"  [ERROR] Pipeline MOLTO stocastica (std={std_sim:.4f}). "
                           f"Se il rumore della GAN è > 0.05, il leakage è impossibile.")
@@ -234,10 +248,13 @@ class BlackBoxEvaluator(BaseEvaluator):
             loss_mode=args.loss_mode,
             region_mode=region_mode,
             n_queries=args.n_queries,
+            patch_size=args.patch_size,
         )
         print(f" -> n_queries: {getattr(attack, 'n_queries', 'N/A')}")
         if hasattr(attack, "n_iters"):
             print(f" -> n_iters: {attack.n_iters}")
+        if hasattr(attack, "patch_size"):
+            print(f" -> patch_size: {attack.patch_size}")
 
         dataset = LFWDataset(root_dir="/kaggle/input/datasets/jessicali9530/lfw-dataset/lfw-deepfunneled/lfw-deepfunneled")
 
