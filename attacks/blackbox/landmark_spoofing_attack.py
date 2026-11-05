@@ -10,23 +10,28 @@ from attacks.base_attack import BaseAttack
 
 class LandmarkSpoofingAttack(BaseAttack):
     """
-    LandmarkSpoofingAttack con supporto region_mode.
+    LandmarkSpoofingAttack — versione FACE-ONLY.
 
-    - region_mode="face" (default): perturba il rettangolo del volto (corretto per DP2)
-    - region_mode="ring": perturba l'anello periferico attorno al volto (corretto per CIAGAN)
+    Perturba il rettangolo del volto per spostare i landmark rilevati da dlib
+    fino all'evasione totale (dlib non trova più il volto → pipeline bypassata).
 
-    L'attacco cerca una perturbazione che massimizzi lo spostamento dei landmark
-    rilevati da dlib, portando (idealmente) all'evasione totale del detector
-    (dlib non trova più il volto → pipeline restituisce l'input invariato).
+    NOTA: `region_mode` è accettato nella firma per compatibilità con il runner
+    (che lo passa sempre), ma viene IGNORATO. La regione è sempre il rettangolo
+    del volto. Su CIAGAN questo funziona solo a ε≥128 (dlib guarda la struttura
+    facciale, non il contesto periferico: perturbare il ring non evade).
     """
 
     def __init__(self, target=None, detector_wrapper=None, device: torch.device = None,
-                 region_mode="face"):
+                 region_mode=None, **kwargs):
+        # region_mode accettato per compatibilità ma ignorato (forzato a "face")
+        if region_mode is not None and region_mode.lower() != "face":
+            print(f"[WARN] LandmarkSpoofingAttack: region_mode='{region_mode}' ignorato. "
+                  f"Forzato a 'face' (unica regione supportata per l'evasione).")
+
         det = detector_wrapper if detector_wrapper is not None else (
             getattr(target, 'detector_wrapper', None) if target else None)
         super().__init__(detector=det, device=device)
         self.target = target
-        self.region_mode = region_mode.lower()
         self.dlib_detector = dlib.get_frontal_face_detector()
         self.predictor = self._load_shape_predictor()
 
@@ -91,41 +96,6 @@ class LandmarkSpoofingAttack(BaseAttack):
         except Exception:
             return 99999.0, cand_gray, None, True
 
-    def _build_perturbation_mask(self, img_adv, y1, y2, x1, x2):
-        """Costruisce la maschera in base al region_mode.
-
-        - "face": rettangolo del volto (default, per DP2)
-        - "ring": anello periferico attorno al volto, esclusa la faccia (per CIAGAN)
-        """
-        mask = torch.zeros_like(img_adv)
-
-        if img_adv.dim() == 3:
-            _, h, w = img_adv.shape
-        else:
-            _, _, h, w = img_adv.shape
-
-        if self.region_mode == "ring":
-            # Anello: box esterno allargato del 60% attorno al volto, meno il volto
-            pad_h = int((y2 - y1) * 0.6)
-            pad_w = int((x2 - x1) * 0.6)
-            yy1 = max(0, y1 - pad_h)
-            xx1 = max(0, x1 - pad_w)
-            yy2 = min(h, y2 + pad_h)
-            xx2 = min(w, x2 + pad_w)
-
-            outer = torch.zeros_like(img_adv)
-            outer[:, yy1:yy2, xx1:xx2] = 1.0
-
-            face = torch.zeros_like(img_adv)
-            face[:, y1:y2, x1:x2] = 1.0
-
-            mask = (outer - face).clamp(0.0, 1.0)
-        else:
-            # "face": rettangolo del volto
-            mask[:, y1:y2, x1:x2] = 1.0
-
-        return mask
-
     def perturb(self, img_orig_tensor, epsilon=16.0, num_iter=50):
         img_adv = img_orig_tensor.clone().detach().to(self.device)
         img_orig_tensor = img_orig_tensor.to(self.device)
@@ -139,7 +109,6 @@ class LandmarkSpoofingAttack(BaseAttack):
         rects = self.dlib_detector(gray, 1)
 
         if not rects or self.predictor is None:
-            # Nessun volto rilevato già in partenza: "successo" banale
             return img_adv, True, 1
 
         det = rects[0]
@@ -154,8 +123,9 @@ class LandmarkSpoofingAttack(BaseAttack):
         for i in range(num_iter):
             u = torch.sign(torch.randn_like(img_adv))
 
-            # FIX: maschera target-aware (ring per CIAGAN, face per DP2)
-            mask = self._build_perturbation_mask(img_adv, y1, y2, x1, x2)
+            # Maschera FACE-ONLY: rettangolo del volto (invariata dalla versione originale)
+            mask = torch.zeros_like(img_adv)
+            mask[:, y1:y2, x1:x2] = 1.0
             u = u * mask
 
             step_size = epsilon * 0.4
@@ -180,7 +150,6 @@ class LandmarkSpoofingAttack(BaseAttack):
                 current_perturbation = pert_minus
                 best_candidate = cand_minus
 
-            # Evasione totale (dlib non trova più alcun volto) → stop immediato
             if evaded_plus or evaded_minus:
                 success = True
                 success_iteration = i + 1
