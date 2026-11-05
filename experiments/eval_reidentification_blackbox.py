@@ -185,7 +185,6 @@ class BlackBoxEvaluator(BaseEvaluator):
                             choices=["evasion", "leakage"])
         parser.add_argument("--n_queries", type=int, default=None)
         parser.add_argument("--patch_size", type=int, default=4)
-        parser.add_argument("--max_plots", type=int, default=20)
         args = parser.parse_args()
 
         attacks_without_patch = {"square", "boundary", "advpatch", "spsa",
@@ -231,7 +230,11 @@ class BlackBoxEvaluator(BaseEvaluator):
 
         dataset = LFWDataset(root_dir="/kaggle/input/datasets/jessicali9530/lfw-dataset/lfw-deepfunneled/lfw-deepfunneled")
 
-        output_dir = f"./results_identity_{args.model}_blackbox"
+        # ============================================================
+        # STRUTTURA: ./results_blackbox/{attack}/{model}/
+        # ============================================================
+        base_results_dir = "./results_blackbox"
+        output_dir = os.path.join(base_results_dir, args.attack.lower(), args.model.lower())
         success_img_dir = os.path.join(output_dir, "successful_evasions")
         os.makedirs(success_img_dir, exist_ok=True)
 
@@ -298,7 +301,7 @@ class BlackBoxEvaluator(BaseEvaluator):
                 if emb_orig is not None and emb_adv_pipe is not None:
                     sim_orig_adv = self.compute_cosine_similarity(emb_orig, emb_adv_pipe)
 
-            # Salvataggio PNG (silenzioso, nessun print)
+            # Salvataggio PNG silenzioso
             if pipeline_bypassed or (success and sim_orig_adv >= 0.5):
                 try:
                     fig, axes = plt.subplots(1, 3, figsize=(15, 5))
@@ -322,6 +325,7 @@ class BlackBoxEvaluator(BaseEvaluator):
             results.append({
                 "sample_id": idx,
                 "attack": f"bb_{args.attack}",
+                "model": args.model,
                 "loss_mode": args.loss_mode,
                 "region_mode": region_mode,
                 "epsilon": args.epsilon,
@@ -335,9 +339,10 @@ class BlackBoxEvaluator(BaseEvaluator):
             })
 
         df = pd.DataFrame(results)
+        # Filename semplificato: attacco e modello sono già nella path
         output_csv = os.path.join(
             output_dir,
-            f"identity_leakage_similarity_{args.attack}_{args.loss_mode}_eps{args.epsilon}.csv"
+            f"{args.loss_mode}_eps{args.epsilon}.csv"
         )
         df.to_csv(output_csv, index=False)
         print(f"\n[SUCCESSO] Report in: {output_csv}")
