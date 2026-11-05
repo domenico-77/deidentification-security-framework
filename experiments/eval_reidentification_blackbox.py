@@ -103,7 +103,8 @@ class BlackBoxEvaluator(BaseEvaluator):
             )
         elif attack_name == "landmark_spoofing":
             return LandmarkSpoofingAttack(
-                target=target, detector_wrapper=detector_wrapper, device=self.device
+                target=target, detector_wrapper=detector_wrapper,
+                device=self.device, region_mode=region_mode,
             )
         elif attack_name == "gfsa":
             return GradientFreeSpatialAttentionAttack(
