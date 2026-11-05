@@ -10,6 +10,13 @@ import pandas as pd
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 
+# IPython display (per mostrare inline in Jupyter/Kaggle)
+try:
+    from IPython.display import display, Image as IPyImage, HTML
+    HAS_IPYTHON_DISPLAY = True
+except Exception:
+    HAS_IPYTHON_DISPLAY = False
+
 from eval_reidentification import BaseEvaluator
 from attacks.blackbox.square_attack import SquareAttack
 from attacks.blackbox.simba_attack import SimBA
@@ -187,6 +194,14 @@ class BlackBoxEvaluator(BaseEvaluator):
                             choices=["evasion", "leakage"])
         parser.add_argument("--n_queries", type=int, default=None)
         parser.add_argument("--patch_size", type=int, default=4)
+
+        # --- Plot inline ---
+        parser.add_argument("--show_plots", dest="show_plots", action="store_true",
+                            default=True, help="Mostra plot inline dei sample evasi/leakati (default: True)")
+        parser.add_argument("--no_show_plots", dest="show_plots", action="store_false",
+                            help="Disabilita plot inline")
+        parser.add_argument("--max_plots", type=int, default=20,
+                            help="Numero massimo di plot inline (default: 20)")
         args = parser.parse_args()
 
         attacks_without_patch = {"square", "boundary", "advpatch", "spsa",
@@ -245,6 +260,7 @@ class BlackBoxEvaluator(BaseEvaluator):
         os.makedirs(success_img_dir, exist_ok=True)
 
         results = []
+        successful_plots = []  # per mostrare inline al termine
         print(f"[INFO] Elaborazione di {min(args.num_samples, len(dataset))} campioni...")
 
         for idx in tqdm(range(min(args.num_samples, len(dataset)))):
@@ -281,17 +297,13 @@ class BlackBoxEvaluator(BaseEvaluator):
                 raw_adv = anonymizer(img_adv_uint8)
                 img_pipeline_adv = raw_adv
 
-            # ============================================================
-            # FIX PIXEL-LEVEL: confronta adv (INPUT) vs pipeline(adv) (OUTPUT)
-            # ============================================================
+            # Pixel-level: adv vs pipeline(adv)
             with torch.no_grad():
                 img_adv_f = img_adv_uint8.detach().cpu().float()
                 img_pipe_adv_chw = self._ensure_chw_tensor(img_pipeline_adv).float()
                 if img_pipe_adv_chw.max() <= 1.0:
                     img_pipe_adv_chw = img_pipe_adv_chw * 255.0
 
-                # Se pipeline bypassa → restituisce adv invariato → pixel_diff ≈ 0
-                # Se pipeline anonimizza → restituisce volto sintetico → pixel_diff > 15
                 pixel_diff_pipeline = (img_adv_f - img_pipe_adv_chw).abs().mean().item()
                 pipeline_bypassed = bool(pixel_diff_pipeline < 5.0)
 
@@ -311,7 +323,9 @@ class BlackBoxEvaluator(BaseEvaluator):
                 if emb_orig is not None and emb_adv_pipe is not None:
                     sim_orig_adv = self.compute_cosine_similarity(emb_orig, emb_adv_pipe)
 
-            if pipeline_bypassed or (success and sim_orig_adv >= 0.5):
+            # Salva plot + registra per mostra inline finale
+            is_interesting = pipeline_bypassed or (success and sim_orig_adv >= 0.5)
+            if is_interesting:
                 try:
                     fig, axes = plt.subplots(1, 3, figsize=(15, 5))
                     orig_np = img_single.detach().cpu().permute(1, 2, 0).numpy().astype(np.uint8)
@@ -319,18 +333,35 @@ class BlackBoxEvaluator(BaseEvaluator):
                     adv_np = img_adv_chw.permute(1, 2, 0).numpy().astype(np.uint8)
 
                     axes[0].imshow(orig_np); axes[0].set_title(f"Originale (ID: {idx})"); axes[0].axis('off')
-                    axes[1].imshow(anon_np); axes[1].set_title(f"Baseline Sim: {sim_orig_anon:.4f}"); axes[1].axis('off')
+                    axes[1].imshow(anon_np); axes[1].set_title(f"Anonimizzata (sim={sim_orig_anon:.4f})"); axes[1].axis('off')
                     axes[2].imshow(adv_np)
-                    axes[2].set_title(f"Adv Sim: {sim_orig_adv:.4f} | "
-                                      f"bypassed={pipeline_bypassed} | "
-                                      f"pix_diff={pixel_diff_pipeline:.1f}")
-                    axes[2].axis('off')
+                    axes[2].set_title(f"De-anonimizzata (sim={sim_orig_adv:.4f})"); axes[2].axis('off')
 
                     plt.tight_layout()
                     fname = os.path.join(success_img_dir,
                                          f"sample_{idx}_bypass{int(pipeline_bypassed)}_sim{sim_orig_adv:.2f}.png")
                     plt.savefig(fname, dpi=150)
                     plt.close(fig)
+
+                    # Etichetta motivo
+                    reasons = []
+                    if pipeline_bypassed:
+                        reasons.append("BYPASS pipeline")
+                    if success and sim_orig_adv >= 0.5:
+                        reasons.append(f"leakage (sim={sim_orig_adv:.3f})")
+                    reason = " + ".join(reasons) if reasons else "success"
+
+                    successful_plots.append({
+                        "sample_id": idx,
+                        "path": fname,
+                        "reason": reason,
+                        "pipeline_bypassed": pipeline_bypassed,
+                        "delta_linf": delta_linf,
+                        "pixel_diff": pixel_diff_pipeline,
+                        "sim_anon": sim_orig_anon,
+                        "sim_adv": sim_orig_adv,
+                        "queries": queries,
+                    })
                 except Exception as e:
                     print(f"[WARN] plot sample {idx} failed: {e}")
 
@@ -393,17 +424,25 @@ class BlackBoxEvaluator(BaseEvaluator):
             print(f"[DIAG] Sign test: {n_pos}/{n_tot} positivi, p = {p_value:.4f}")
             print(f"[DIAG] Noise floor (2×std): {noise_floor:.4f}")
 
-            if diff > noise_floor and p_value < 0.05:
-                print(f"[OK] ATTACCO EFFICACE: Δ={diff:+.4f} > soglia {noise_floor:.4f}, p={p_value:.4f}")
-            elif p_value < 0.05:
-                print(f"[INFO] Segnale significativo (p={p_value:.4f}) ma Δ={diff:+.4f} < {noise_floor:.4f}. Debole.")
+            if n_bypassed >= n_tot * 0.5:
+                print(f"\n[INFO] {n_bypassed}/{n_tot} campioni hanno BYPASSATO la pipeline.")
+                print(f"       Il Δ metrico è NEGATIVO perché anche InsightFace è stato evaso.")
+                print(f"       Il BYPASS è confermato da pixel_diff_pipeline ≈ 0.")
+                measurable = df[df["sim_orig_vs_adversarial_pipe"].abs() > 0.01]
+                if len(measurable) > 0:
+                    print(f"\n[DIAG] Sample MISURABILI ({len(measurable)}/{n_tot}):")
+                    for _, row in measurable.iterrows():
+                        d = row["sim_orig_vs_adversarial_pipe"] - row["sim_orig_vs_anonymized"]
+                        print(f"  sample {int(row['sample_id'])}: "
+                              f"anon={row['sim_orig_vs_anonymized']:.4f} → "
+                              f"adv={row['sim_orig_vs_adversarial_pipe']:.4f} (Δ={d:+.4f})")
             else:
-                print(f"[WARN] Δ={diff:+.4f} non significativo (p={p_value:.4f}, soglia {noise_floor:.4f}).")
-
-            if n_bypassed > 0:
-                print(f"\n[!] {n_bypassed}/{n_tot} campioni BYPASSANO la pipeline.")
-                print(f"    sim_orig_vs_adv può essere 0.0 perché anche InsightFace è evaso.")
-                print(f"    Il bypass è confermato da pixel_diff_pipeline ≈ 0 (adv == pipeline output).")
+                if diff > noise_floor and p_value < 0.05:
+                    print(f"[OK] ATTACCO EFFICACE: Δ={diff:+.4f} > soglia {noise_floor:.4f}, p={p_value:.4f}")
+                elif p_value < 0.05:
+                    print(f"[INFO] Segnale significativo (p={p_value:.4f}) ma Δ={diff:+.4f} < {noise_floor:.4f}. Debole.")
+                else:
+                    print(f"[WARN] Δ={diff:+.4f} non significativo (p={p_value:.4f}, soglia {noise_floor:.4f}).")
         else:
             n_evaded = int(df["detector_evaded"].sum())
             print(f"\n[DIAG] Evasion detector: {n_evaded}/{n_tot} ({100*n_evaded/max(n_tot,1):.1f}%)")
@@ -416,6 +455,65 @@ class BlackBoxEvaluator(BaseEvaluator):
                 print(f"[WARN] Nessuna evasione e nessun bypass.")
 
         print("\n" + "=" * 100)
+
+        # ============================================================
+        # PLOT INLINE DEI SAMPLE EVASI / LEAKATI
+        # ============================================================
+        if args.show_plots and len(successful_plots) > 0:
+            n_to_show = min(len(successful_plots), args.max_plots)
+            print(f"\n{'=' * 100}")
+            print(f" PLOT INLINE — {n_to_show}/{len(successful_plots)} sample evasi/leakati")
+            print(f"{'=' * 100}")
+            print(f" Ogni plot mostra: Originale | Anonimizzata (baseline) | De-anonimizzata (pipeline su adv)")
+            print(f" File salvati in: {success_img_dir}")
+            print(f"{'=' * 100}\n")
+
+            for entry in successful_plots[:n_to_show]:
+                header_html = (
+                    f"<div style='border:1px solid #ccc; padding:10px; margin:10px 0; "
+                    f"background-color:#f9f9f9;'>"
+                    f"<h3 style='margin:0;'>Sample {entry['sample_id']} — {entry['reason']}</h3>"
+                    f"<p style='margin:5px 0; font-size:13px; color:#333;'>"
+                    f"<b>ε = {args.epsilon:.0f}</b> | "
+                    f"<b>Δlinf = {entry['delta_linf']:.1f}</b> | "
+                    f"<b>queries = {entry['queries']}</b> | "
+                    f"<b>pixel_diff = {entry['pixel_diff']:.2f}</b> | "
+                    f"<b>pipeline_bypassed = {entry['pipeline_bypassed']}</b><br>"
+                    f"<b>sim_anon (baseline) = {entry['sim_anon']:.4f}</b> → "
+                    f"<b>sim_adv (de-anonimizzata) = {entry['sim_adv']:.4f}</b> "
+                    f"(Δ = {entry['sim_adv'] - entry['sim_anon']:+.4f})"
+                    f"</p></div>"
+                )
+
+                if HAS_IPYTHON_DISPLAY:
+                    display(HTML(header_html))
+                    display(IPyImage(filename=entry['path'], width=1200))
+                else:
+                    # Fallback: matplotlib
+                    print(f"\n=== Sample {entry['sample_id']} — {entry['reason']} ===")
+                    print(f"    Δlinf={entry['delta_linf']:.1f} | queries={entry['queries']} | "
+                          f"sim_anon={entry['sim_anon']:.4f} → sim_adv={entry['sim_adv']:.4f}")
+                    try:
+                        import matplotlib.image as mpimg
+                        img = mpimg.imread(entry['path'])
+                        plt.figure(figsize=(15, 5))
+                        plt.imshow(img)
+                        plt.axis('off')
+                        plt.tight_layout()
+                        plt.show()
+                        plt.close()
+                    except Exception as e:
+                        print(f"    [WARN] impossibile mostrare {entry['path']}: {e}")
+
+            if len(successful_plots) > n_to_show:
+                print(f"\n[INFO] {len(successful_plots) - n_to_show} plot non mostrati "
+                      f"(max_plots={args.max_plots}). Tutti salvati in: {success_img_dir}")
+
+            print(f"\n{'=' * 100}")
+            print(f" FINE PLOT INLINE — {len(successful_plots)} sample totali")
+            print(f"{'=' * 100}\n")
+        elif args.show_plots and len(successful_plots) == 0:
+            print(f"\n[INFO] Nessun sample evaso/leakato da mostrare (nessun bypass, nessuna sim alta).")
 
 
 if __name__ == "__main__":
