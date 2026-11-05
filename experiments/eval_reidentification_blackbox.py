@@ -230,9 +230,7 @@ class BlackBoxEvaluator(BaseEvaluator):
 
         dataset = LFWDataset(root_dir="/kaggle/input/datasets/jessicali9530/lfw-dataset/lfw-deepfunneled/lfw-deepfunneled")
 
-        # ============================================================
         # STRUTTURA: ./results_blackbox/{attack}/{model}/
-        # ============================================================
         base_results_dir = "./results_blackbox"
         output_dir = os.path.join(base_results_dir, args.attack.lower(), args.model.lower())
         success_img_dir = os.path.join(output_dir, "successful_evasions")
@@ -275,15 +273,15 @@ class BlackBoxEvaluator(BaseEvaluator):
                 raw_adv = anonymizer(img_adv_uint8)
                 img_pipeline_adv = raw_adv
 
-            # Pixel-level
+            # Uso interno: pixel_diff serve solo per calcolare pipeline_bypassed (non stampato)
             with torch.no_grad():
                 img_adv_f = img_adv_uint8.detach().cpu().float()
                 img_pipe_adv_chw = self._ensure_chw_tensor(img_pipeline_adv).float()
                 if img_pipe_adv_chw.max() <= 1.0:
                     img_pipe_adv_chw = img_pipe_adv_chw * 255.0
 
-                pixel_diff_pipeline = (img_adv_f - img_pipe_adv_chw).abs().mean().item()
-                pipeline_bypassed = bool(success and pixel_diff_pipeline < 1.0)
+                _pixel_diff = (img_adv_f - img_pipe_adv_chw).abs().mean().item()
+                pipeline_bypassed = bool(success and _pixel_diff < 1.0)
 
             sim_orig_anon = 0.0
             sim_orig_adv = 0.0
@@ -322,7 +320,13 @@ class BlackBoxEvaluator(BaseEvaluator):
                 except Exception:
                     pass
 
-            results.append({
+            # ============================================================
+            # COSTRUZIONE RIGA CONDIZIONALE
+            #   - evasion  → include detector_evaded, NON pipeline_bypassed
+            #   - leakage  → include pipeline_bypassed, NON detector_evaded
+            #   - sempre   → NO pixel_diff_pipeline
+            # ============================================================
+            row = {
                 "sample_id": idx,
                 "attack": f"bb_{args.attack}",
                 "model": args.model,
@@ -330,20 +334,19 @@ class BlackBoxEvaluator(BaseEvaluator):
                 "region_mode": region_mode,
                 "epsilon": args.epsilon,
                 "delta_linf": round(delta_linf, 4),
-                "detector_evaded": success,
-                "pipeline_bypassed": pipeline_bypassed,
-                "pixel_diff_pipeline": round(pixel_diff_pipeline, 2),
                 "queries_used": queries,
                 "sim_orig_vs_anonymized": round(sim_orig_anon, 4),
                 "sim_orig_vs_adversarial_pipe": round(sim_orig_adv, 4),
-            })
+            }
+            if args.loss_mode == "evasion":
+                row["detector_evaded"] = success
+            else:  # leakage
+                row["pipeline_bypassed"] = pipeline_bypassed
+
+            results.append(row)
 
         df = pd.DataFrame(results)
-        # Filename semplificato: attacco e modello sono già nella path
-        output_csv = os.path.join(
-            output_dir,
-            f"{args.loss_mode}_eps{args.epsilon}.csv"
-        )
+        output_csv = os.path.join(output_dir, f"{args.loss_mode}_eps{args.epsilon}.csv")
         df.to_csv(output_csv, index=False)
         print(f"\n[SUCCESSO] Report in: {output_csv}")
 
@@ -355,8 +358,10 @@ class BlackBoxEvaluator(BaseEvaluator):
         print("\n" + "=" * 100)
         print(" STATISTICHE")
         print("=" * 100)
-        stats_cols = ["delta_linf", "pixel_diff_pipeline", "queries_used",
-                      "sim_orig_vs_anonymized", "sim_orig_vs_adversarial_pipe"]
+        # Solo colonne numeriche realmente presenti
+        base_cols = ["delta_linf", "queries_used",
+                     "sim_orig_vs_anonymized", "sim_orig_vs_adversarial_pipe"]
+        stats_cols = [c for c in base_cols if c in df.columns]
         print(df[stats_cols].describe().to_string())
         print("=" * 100)
 
