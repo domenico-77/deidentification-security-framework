@@ -1,3 +1,4 @@
+%%writefile experiments/eval_reidentification_blackbox.py
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -20,6 +21,10 @@ from attacks.blackbox.gradient_free_spatial_attention_attack import GradientFree
 
 from data_loaders.lfw import LFWDataset
 from targets.ciagan import CIAGANTarget
+
+
+# Soglia biometrica per leakage (allineata al resto del codice)
+LEAKAGE_THRESHOLD = 0.55
 
 
 class BlackBoxEvaluator(BaseEvaluator):
@@ -273,7 +278,7 @@ class BlackBoxEvaluator(BaseEvaluator):
                 raw_adv = anonymizer(img_adv_uint8)
                 img_pipeline_adv = raw_adv
 
-            # Uso interno: pixel_diff serve solo per calcolare pipeline_bypassed (non stampato)
+            # Uso interno: pixel_diff per calcolare pipeline_bypassed (non stampato)
             with torch.no_grad():
                 img_adv_f = img_adv_uint8.detach().cpu().float()
                 img_pipe_adv_chw = self._ensure_chw_tensor(img_pipeline_adv).float()
@@ -299,8 +304,20 @@ class BlackBoxEvaluator(BaseEvaluator):
                 if emb_orig is not None and emb_adv_pipe is not None:
                     sim_orig_adv = self.compute_cosine_similarity(emb_orig, emb_adv_pipe)
 
-            # Salvataggio PNG silenzioso
-            if pipeline_bypassed or (success and sim_orig_adv >= 0.5):
+            # ============================================================
+            # CLASSIFICAZIONE OUTCOME (solo per leakage)
+            #   - BYPASS: pipeline_bypassed=True (volto originale intatto)
+            #   - LEAKAGE: pipeline anonimizza MA sim_adv >= soglia
+            #   - FAIL: altrimenti
+            # ============================================================
+            if args.loss_mode == "leakage":
+                leakage_detected = bool((not pipeline_bypassed) and (sim_orig_adv >= LEAKAGE_THRESHOLD))
+            else:
+                leakage_detected = False  # non applicabile
+
+            # Salvataggio PNG silenzioso: includiamo anche leakage_detected
+            save_plot = pipeline_bypassed or leakage_detected or (success and sim_orig_adv >= 0.5)
+            if save_plot:
                 try:
                     fig, axes = plt.subplots(1, 3, figsize=(15, 5))
                     orig_np = img_single.detach().cpu().permute(1, 2, 0).numpy().astype(np.uint8)
@@ -313,19 +330,15 @@ class BlackBoxEvaluator(BaseEvaluator):
                     axes[2].set_title(f"De-anonimizzata (sim={sim_orig_adv:.4f})"); axes[2].axis('off')
 
                     plt.tight_layout()
+                    tag = "bypass" if pipeline_bypassed else ("leak" if leakage_detected else "highsim")
                     fname = os.path.join(success_img_dir,
-                                         f"sample_{idx}_bypass{int(pipeline_bypassed)}_sim{sim_orig_adv:.2f}.png")
+                                         f"sample_{idx}_{tag}_sim{sim_orig_adv:.2f}.png")
                     plt.savefig(fname, dpi=150)
                     plt.close(fig)
                 except Exception:
                     pass
 
-            # ============================================================
-            # COSTRUZIONE RIGA CONDIZIONALE
-            #   - evasion  → include detector_evaded, NON pipeline_bypassed
-            #   - leakage  → include pipeline_bypassed, NON detector_evaded
-            #   - sempre   → NO pixel_diff_pipeline
-            # ============================================================
+            # Costruzione riga condizionale
             row = {
                 "sample_id": idx,
                 "attack": f"bb_{args.attack}",
@@ -342,6 +355,7 @@ class BlackBoxEvaluator(BaseEvaluator):
                 row["detector_evaded"] = success
             else:  # leakage
                 row["pipeline_bypassed"] = pipeline_bypassed
+                row["leakage_detected"] = leakage_detected
 
             results.append(row)
 
@@ -358,7 +372,6 @@ class BlackBoxEvaluator(BaseEvaluator):
         print("\n" + "=" * 100)
         print(" STATISTICHE")
         print("=" * 100)
-        # Solo colonne numeriche realmente presenti
         base_cols = ["delta_linf", "queries_used",
                      "sim_orig_vs_anonymized", "sim_orig_vs_adversarial_pipe"]
         stats_cols = [c for c in base_cols if c in df.columns]
